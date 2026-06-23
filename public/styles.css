@@ -571,3 +571,12 @@ label {
   .drawer-panel { border-left: 0; }
   .detail-grid { grid-template-columns: 1fr; }
 }
+#task-search {
+  min-width: 220px;
+}
+
+@media (max-width: 820px) {
+  #task-search {
+    min-width: 0;
+  }
+}

@@ -2,6 +2,7 @@ const state = {
   data: null,
   selectedProjectId: "all",
   selectedStatus: "all",
+  taskSearch: "",
   selectedTaskId: null
 };
 
@@ -25,6 +26,17 @@ function fmtDate(value) {
 }
 
 
+
+
+function taskMatchesSearch(task) {
+  const query = state.taskSearch.trim().toLowerCase();
+  if (!query) return true;
+  const assignedNames = task.assignedEmployeeIds.map(employeeName).join(" ");
+  return [task.title, task.description, projectName(task.projectId), assignedNames]
+    .join(" ")
+    .toLowerCase()
+    .includes(query);
+}
 
 function statusFilterOptions() {
   return [
@@ -416,7 +428,8 @@ function renderTasks() {
   const tasks = state.data.tasks.filter((task) => {
     const projectMatches = state.selectedProjectId === "all" || task.projectId === state.selectedProjectId;
     const statusMatches = state.selectedStatus === "all" || task.status === state.selectedStatus;
-    return projectMatches && statusMatches;
+    const searchMatches = taskMatchesSearch(task);
+    return projectMatches && statusMatches && searchMatches;
   });
 
   $("#task-list").innerHTML =
@@ -628,6 +641,11 @@ function bindEvents() {
   document.querySelectorAll("dialog").forEach((dialog) => {
     dialog.addEventListener("close", () => dialog.querySelector("form")?.reset());
   });
+  $("#task-search").addEventListener("input", (event) => {
+    state.taskSearch = event.target.value;
+    renderTasks();
+  });
+
 
   $("#project-filter").addEventListener("change", (event) => {
     state.selectedProjectId = event.target.value;
