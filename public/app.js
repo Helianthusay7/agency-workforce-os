@@ -118,6 +118,12 @@ function taskActionButtons(task) {
 
 
 
+
+function availableTaskEmployees(task) {
+  const assigned = new Set(task.assignedEmployeeIds);
+  return state.data.employees.filter((employee) => !assigned.has(employee.id));
+}
+
 function taskChatRoom(taskId) {
   return state.data.chatRooms?.find((room) => room.taskId === taskId);
 }
@@ -167,6 +173,7 @@ function renderDrawer() {
   const logs = taskLogs(task.id);
   const chatMessages = taskChatMessages(task.id);
   const employees = task.assignedEmployeeIds.map((employeeId) => byId(state.data.employees, employeeId)).filter(Boolean);
+  const availableEmployees = availableTaskEmployees(task);
   const project = projectForTask(task);
 
   $("#drawer-title").textContent = task.title;
@@ -205,6 +212,12 @@ function renderDrawer() {
           <span>${template?.summary || ""}</span>
         </div>`;
       }).join("") || `<div class="empty">暂无 AI 员工</div>`}
+      <form class="artifact-form" data-assign-form="${task.id}">
+        <select name="employeeId" ${availableEmployees.length ? "" : "disabled"}>
+          ${availableEmployees.map((employee) => `<option value="${employee.id}">${employee.displayName} · ${employee.title}</option>`).join("") || `<option>暂无可添加员工</option>`}
+        </select>
+        <button class="secondary-button" type="submit" ${availableEmployees.length ? "" : "disabled"}>添加参与员工</button>
+      </form>
     </section>
     <section class="detail-section">
       <h3>AI 讨论</h3>
@@ -511,6 +524,16 @@ async function load() {
 
 
 
+
+async function assignEmployee(taskId, employeeId) {
+  await api(`/api/tasks/${taskId}/assign`, {
+    method: "POST",
+    body: JSON.stringify({ employeeIds: [employeeId] })
+  });
+  await load();
+  if (state.selectedTaskId) renderDrawer();
+}
+
 async function runAgentDiscussion(taskId) {
   await api(`/api/tasks/${taskId}/chat/agent-round`, {
     method: "POST",
@@ -613,6 +636,15 @@ function bindEvents() {
   document.body.addEventListener("submit", async (event) => {
     const formElement = event.target;
     if (!(formElement instanceof HTMLFormElement)) return;
+    
+    const assignTaskId = formElement.dataset.assignForm;
+    if (assignTaskId) {
+      event.preventDefault();
+      const form = new FormData(formElement);
+      await assignEmployee(assignTaskId, form.get("employeeId"));
+      formElement.reset();
+      return;
+    }
     const taskId = formElement.dataset.artifactForm;
     if (!taskId) return;
     event.preventDefault();

@@ -195,9 +195,9 @@
       "teamId": "team_engineering",
       "model": "gpt-5",
       "permission": "Draft",
-      "status": "available",
-      "load": 22,
-      "currentTaskId": null
+      "status": "busy",
+      "load": 40,
+      "currentTaskId": "task_beta"
     },
     {
       "id": "emp_rhea",
@@ -263,7 +263,8 @@
       "priority": "P2",
       "description": "规划 30 个种子团队的招募、访谈和反馈收集。",
       "assignedEmployeeIds": [
-        "emp_sol"
+        "emp_sol",
+        "emp_nova"
       ],
       "dueDate": "2026-07-05",
       "createdAt": "2026-06-23T05:10:00.000Z"
@@ -345,6 +346,15 @@
     }
   ],
   "auditLogs": [
+    {
+      "id": "log_xp85ntas4f",
+      "createdAt": "2026-06-23T09:37:28.287Z",
+      "actorType": "user",
+      "actorId": "usr_lin",
+      "event": "assigned_employees",
+      "targetId": "task_beta",
+      "detail": "指派 AI 员工：emp_nova"
+    },
     {
       "id": "log_vil2sso5bt",
       "createdAt": "2026-06-23T08:51:52.697Z",
