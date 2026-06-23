@@ -3,41 +3,41 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Agency Team Workstation</title>
+    <title>Agency Workforce OS</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-mark">AW</div>
+          <div class="brand-mark">A</div>
           <div>
             <strong id="org-name">Agency</strong>
             <span id="org-plan">Team</span>
           </div>
         </div>
 
-        <nav class="nav-list" aria-label="主导航">
+        <nav class="nav-list" aria-label="Primary navigation">
           <button class="nav-item active" data-view="dashboard">
-            <span>⌂</span>
-            <span>工作台</span>
+            <span>01</span>
+            <span>Overview</span>
           </button>
           <button class="nav-item" data-view="employees">
-            <span>◎</span>
-            <span>AI 员工</span>
+            <span>02</span>
+            <span>Agents</span>
           </button>
           <button class="nav-item" data-view="tasks">
-            <span>□</span>
-            <span>任务</span>
+            <span>03</span>
+            <span>Work Queue</span>
           </button>
           <button class="nav-item" data-view="approvals">
-            <span>✓</span>
-            <span>审批</span>
+            <span>04</span>
+            <span>Approvals</span>
           </button>
         </nav>
 
         <section class="side-section">
-          <h2>团队</h2>
+          <h2>Team</h2>
           <div id="team-list" class="team-list"></div>
         </section>
       </aside>
@@ -45,30 +45,30 @@
       <main class="workspace">
         <header class="topbar">
           <div>
-            <p class="eyebrow">多人团队 AI 员工工作站</p>
-            <h1>团队执行控制台</h1>
+            <p class="eyebrow">Agency Workforce OS</p>
+            <h1>Engineering operations console</h1>
           </div>
           <div class="topbar-actions">
-            <button id="refresh-btn" class="icon-button" title="刷新">↻</button>
-            <button id="open-task-modal" class="primary-button">新建任务</button>
+            <button id="refresh-btn" class="icon-button" title="Refresh">↻</button>
+            <button id="open-task-modal" class="primary-button">New task</button>
           </div>
         </header>
 
-        <section class="metric-grid" aria-label="关键指标">
+        <section class="metric-grid" aria-label="Key metrics">
           <article class="metric">
-            <span>活跃任务</span>
+            <span>Active tasks</span>
             <strong id="metric-active-tasks">0</strong>
           </article>
           <article class="metric">
-            <span>待审批</span>
+            <span>Pending approvals</span>
             <strong id="metric-approvals">0</strong>
           </article>
           <article class="metric">
-            <span>可用 AI 员工</span>
+            <span>Available agents</span>
             <strong id="metric-employees">0</strong>
           </article>
           <article class="metric">
-            <span>需关注项目</span>
+            <span>Projects at risk</span>
             <strong id="metric-risk">0</strong>
           </article>
         </section>
@@ -77,8 +77,8 @@
           <section class="panel project-panel">
             <div class="panel-header">
               <div>
-                <h2>项目概览</h2>
-                <p>项目状态、团队归属和知识源</p>
+                <h2>Projects</h2>
+                <p>Status, ownership, repository and knowledge sources</p>
               </div>
             </div>
             <div id="project-list" class="project-list"></div>
@@ -87,12 +87,12 @@
           <section class="panel task-panel">
             <div class="panel-header">
               <div>
-                <h2>任务流</h2>
-                <p>按项目、状态和优先级推进</p>
+                <h2>Work queue</h2>
+                <p>Prioritized execution by project, state and priority</p>
               </div>
               <div class="filter-group">
-                <select id="project-filter" aria-label="项目筛选"></select>
-                <select id="status-filter" aria-label="状态筛选"></select>
+                <select id="project-filter" aria-label="Project filter"></select>
+                <select id="status-filter" aria-label="Status filter"></select>
               </div>
             </div>
             <div id="task-list" class="task-list"></div>
@@ -101,18 +101,18 @@
           <section class="panel employee-panel">
             <div class="panel-header">
               <div>
-                <h2>AI 员工池</h2>
-                <p>岗位、权限、负载和归属团队</p>
+                <h2>Agent roster</h2>
+                <p>Role, permission, load and team assignment</p>
               </div>
-              <button id="open-employee-modal" class="secondary-button">添加员工</button>
+              <button id="open-employee-modal" class="secondary-button">Add agent</button>
             </div>
             <div id="employee-list" class="employee-list"></div>
           </section>
           <section class="panel member-panel">
             <div class="panel-header">
               <div>
-                <h2>团队成员</h2>
-                <p>真人成员、角色和团队归属</p>
+                <h2>Members</h2>
+                <p>Human owners, roles and team assignment</p>
               </div>
             </div>
             <div id="member-list" class="member-list"></div>
@@ -122,8 +122,8 @@
           <section class="panel approval-panel">
             <div class="panel-header">
               <div>
-                <h2>审批队列</h2>
-                <p>写操作和外部动作先进入这里</p>
+                <h2>Approval queue</h2>
+                <p>Controlled actions waiting for human review</p>
               </div>
             </div>
             <div id="approval-list" class="approval-list"></div>
@@ -132,8 +132,8 @@
           <section class="panel artifact-panel">
             <div class="panel-header">
               <div>
-                <h2>交付物</h2>
-                <p>计划、架构、代码和报告</p>
+                <h2>Artifacts</h2>
+                <p>Plans, runtime output, decisions and reports</p>
               </div>
             </div>
             <div id="artifact-list" class="artifact-list"></div>
@@ -141,8 +141,8 @@
           <section class="panel template-panel">
             <div class="panel-header">
               <div>
-                <h2>岗位模板</h2>
-                <p>AI 员工的角色边界和交付方向</p>
+                <h2>Role templates</h2>
+                <p>Operating boundaries and expected deliverables</p>
               </div>
             </div>
             <div id="template-list" class="template-list"></div>
@@ -152,8 +152,8 @@
           <section class="panel log-panel">
             <div class="panel-header">
               <div>
-                <h2>审计日志</h2>
-                <p>用户、AI 员工和审批动作</p>
+                <h2>Audit log</h2>
+                <p>Trace of user, agent and approval events</p>
               </div>
             </div>
             <div id="log-list" class="log-list"></div>
@@ -165,19 +165,19 @@
     <dialog id="task-modal" class="modal">
       <form id="task-form">
         <div class="modal-header">
-          <h2>新建任务</h2>
-          <button class="icon-button" type="button" data-close-modal title="关闭">×</button>
+          <h2>New task</h2>
+          <button class="icon-button" type="button" data-close-modal title="Close">×</button>
         </div>
         <label>
-          标题
-          <input name="title" required maxlength="80" placeholder="例如：设计内测审批流程" />
+          Title
+          <input name="title" required maxlength="80" placeholder="Example: define release approval workflow" />
         </label>
         <label>
-          项目
+          Project
           <select name="projectId" id="task-project-select"></select>
         </label>
         <label>
-          优先级
+          Priority
           <select name="priority">
             <option>P0</option>
             <option>P1</option>
@@ -185,20 +185,20 @@
           </select>
         </label>
         <label>
-          指派 AI 员工
+          Assigned agent
           <select name="employeeId" id="task-employee-select"></select>
         </label>
         <label>
-          截止日期
+          Due date
           <input name="dueDate" type="date" />
         </label>
         <label>
-          描述
-          <textarea name="description" rows="4" maxlength="320" placeholder="输入目标、上下文和验收标准"></textarea>
+          Description
+          <textarea name="description" rows="4" maxlength="320" placeholder="Goal, context and acceptance criteria"></textarea>
         </label>
         <div class="modal-actions">
-          <button class="secondary-button" type="button" data-close-modal>取消</button>
-          <button class="primary-button" type="submit">创建</button>
+          <button class="secondary-button" type="button" data-close-modal>Cancel</button>
+          <button class="primary-button" type="submit">Create</button>
         </div>
       </form>
     </dialog>
@@ -206,23 +206,23 @@
     <dialog id="employee-modal" class="modal">
       <form id="employee-form">
         <div class="modal-header">
-          <h2>添加 AI 员工</h2>
-          <button class="icon-button" type="button" data-close-modal title="关闭">×</button>
+          <h2>Add agent</h2>
+          <button class="icon-button" type="button" data-close-modal title="Close">×</button>
         </div>
         <label>
-          员工名
-          <input name="displayName" required maxlength="30" placeholder="例如：Ava" />
+          Agent name
+          <input name="displayName" required maxlength="30" placeholder="Example: Ava" />
         </label>
         <label>
-          岗位模板
+          Role template
           <select name="templateId" id="employee-template-select"></select>
         </label>
         <label>
-          团队
+          Team
           <select name="teamId" id="employee-team-select"></select>
         </label>
         <label>
-          权限
+          Permission
           <select name="permission">
             <option>Read Only</option>
             <option selected>Suggest</option>
@@ -231,20 +231,20 @@
           </select>
         </label>
         <div class="modal-actions">
-          <button class="secondary-button" type="button" data-close-modal>取消</button>
-          <button class="primary-button" type="submit">添加</button>
+          <button class="secondary-button" type="button" data-close-modal>Cancel</button>
+          <button class="primary-button" type="submit">Add</button>
         </div>
       </form>
     </dialog>
     <aside id="task-drawer" class="drawer" aria-hidden="true">
       <div class="drawer-backdrop" data-close-drawer></div>
-      <section class="drawer-panel" aria-label="任务详情">
+      <section class="drawer-panel" aria-label="Task details">
         <div class="drawer-header">
           <div>
-            <p class="eyebrow">任务详情</p>
-            <h2 id="drawer-title">未选择任务</h2>
+            <p class="eyebrow">Work item</p>
+            <h2 id="drawer-title">No task selected</h2>
           </div>
-          <button class="icon-button" type="button" data-close-drawer title="关闭">×</button>
+          <button class="icon-button" type="button" data-close-drawer title="Close">×</button>
         </div>
         <div id="drawer-body" class="drawer-body"></div>
       </section>
