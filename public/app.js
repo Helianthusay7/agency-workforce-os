@@ -22,7 +22,7 @@ function byId(items, id) {
 }
 
 function fmtDate(value) {
-  if (!value) return "Not set";
+  if (!value) return "未设置";
   return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
@@ -33,22 +33,22 @@ function fmtDate(value) {
 function viewConfig(view) {
   const configs = {
     dashboard: {
-      title: "Overview",
+      title: "总览",
       showMetrics: true,
-      panels: ["project-panel", "task-panel"]
+      panels: ["onboarding-panel", "project-panel", "task-panel"]
     },
     tasks: {
-      title: "Work queue",
+      title: "任务队列",
       showMetrics: false,
       panels: ["task-panel"]
     },
     employees: {
-      title: "Agents",
+      title: "AI 员工",
       showMetrics: false,
       panels: ["employee-panel", "member-panel", "template-panel"]
     },
     approvals: {
-      title: "Approvals",
+      title: "审批",
       showMetrics: false,
       panels: ["approval-panel", "artifact-panel", "log-panel"]
     }
@@ -85,11 +85,11 @@ function taskMatchesSearch(task) {
 
 function statusFilterOptions() {
   return [
-    ["all", "All states"],
-    ["todo", "Backlog"],
-    ["running", "In progress"],
-    ["waiting_approval", "In review"],
-    ["done", "Done"]
+    ["all", "全部状态"],
+    ["todo", "待处理"],
+    ["running", "执行中"],
+    ["waiting_approval", "待审批"],
+    ["done", "已完成"]
   ];
 }
 
@@ -99,55 +99,94 @@ function projectForTask(task) {
 
 function healthText(health) {
   const labels = {
-    "on-track": "Healthy",
-    watch: "Watch",
-    risk: "At risk"
+    "on-track": "健康",
+    watch: "关注",
+    risk: "有风险"
   };
-  return labels[health] || health || "Not set";
+  return labels[health] || health || "未设置";
 }
 
 function projectStatusText(status) {
   const labels = {
-    active: "Active",
-    planning: "Planning",
-    paused: "Paused",
-    done: "Done"
+    active: "进行中",
+    planning: "规划中",
+    paused: "已暂停",
+    done: "已完成"
   };
-  return labels[status] || status || "Not set";
+  return labels[status] || status || "未设置";
 }
 
 function statusText(status) {
   const labels = {
-    todo: "Backlog",
-    running: "In progress",
-    waiting_approval: "In review",
-    done: "Done",
-    failed: "Failed",
-    approved: "Approved",
-    rejected: "Rejected",
-    pending: "In review"
+    todo: "待处理",
+    running: "执行中",
+    waiting_approval: "待审批",
+    done: "已完成",
+    failed: "失败",
+    approved: "已批准",
+    rejected: "已拒绝",
+    pending: "待审批"
   };
   return labels[status] || status;
 }
 
 function employeeName(id) {
-  return byId(state.data.employees, id)?.displayName || "Unassigned";
+  return byId(state.data.employees, id)?.displayName || "未分配";
 }
 
 function userName(id) {
-  return byId(state.data.users, id)?.name || "Unknown member";
+  return byId(state.data.users, id)?.name || "未知成员";
 }
 
 function projectName(id) {
-  return byId(state.data.projects, id)?.name || "Unknown project";
+  return byId(state.data.projects, id)?.name || "未知项目";
 }
 
 function teamName(id) {
-  return byId(state.data.teams, id)?.name || "No team";
+  return byId(state.data.teams, id)?.name || "无团队";
 }
 
 function templateFor(employee) {
   return byId(state.data.agentTemplates, employee.templateId);
+}
+
+const taskTemplates = {
+  product: {
+    title: "分析产品需求并定义 MVP 范围",
+    description: "请梳理这个需求的目标用户、核心场景、第一版范围、验收标准、风险点和下一步任务。输出必须能直接进入执行。",
+    templateId: "tpl_pm",
+    priority: "P1"
+  },
+  architecture: {
+    title: "设计系统架构和执行边界",
+    description: "请基于当前需求设计系统模块、数据流、接口边界、执行流程、风险点和最小实现方案。重点保证可落地、可审计、可逐步扩展。",
+    templateId: "tpl_architect",
+    priority: "P1"
+  },
+  implementation: {
+    title: "制定工程实现计划",
+    description: "请把需求拆成可执行的工程步骤，明确需要修改的文件、接口、数据结构、验证方式和交付物。",
+    templateId: "tpl_frontend",
+    priority: "P2"
+  }
+};
+
+function employeeForTemplate(templateId) {
+  return state.data.employees.find((employee) => employee.templateId === templateId) || state.data.employees[0];
+}
+
+function applyTaskTemplate(templateKey) {
+  const template = taskTemplates[templateKey];
+  if (!template) return;
+
+  const form = $("#task-form");
+  form.elements.title.value = template.title;
+  form.elements.description.value = template.description;
+  form.elements.priority.value = template.priority;
+  form.elements.projectId.value = state.data.projects[0]?.id || "";
+  const employee = employeeForTemplate(template.templateId);
+  if (employee) form.elements.employeeId.value = employee.id;
+  $("#task-modal").showModal();
 }
 
 function closeModal(button) {
@@ -164,12 +203,12 @@ function taskActionButtons(task) {
 
   const actions = [];
   if (task.status === "todo") {
-    actions.push(`<button class="secondary-button" data-run-task="${task.id}">Start</button>`);
+    actions.push(`<button class="secondary-button" data-run-task="${task.id}">开始任务</button>`);
   }
   if (task.status !== "waiting_approval") {
-    actions.push(`<button class="secondary-button" data-approval-task="${task.id}">Request review</button>`);
+    actions.push(`<button class="secondary-button" data-approval-task="${task.id}">请求审批</button>`);
   }
-  actions.push(`<button class="secondary-button" data-done-task="${task.id}">Done</button>`);
+  actions.push(`<button class="secondary-button" data-done-task="${task.id}">标记完成</button>`);
   return `<div class="task-actions">${actions.join("")}</div>`;
 }
 
@@ -216,6 +255,19 @@ function taskLogs(taskId) {
   return state.data.auditLogs.filter((log) => log.targetId === taskId || taskApprovals(taskId).some((approval) => approval.id === log.targetId));
 }
 
+function taskGuidance(task, artifacts) {
+  if (!task.assignedEmployeeIds.length) {
+    return "这个任务还没有分配 AI 员工。先添加一个 AI 员工，再运行执行。";
+  }
+  if (!artifacts.length) {
+    return "这个任务还没有交付物。点击“让 AI 员工执行”，系统会调用 Runtime 生成交付物并记录执行过程。";
+  }
+  if (task.status !== "done") {
+    return "这个任务已经有交付物。你可以查看结果、继续拆分任务，或确认后标记完成。";
+  }
+  return "这个任务已经完成。你可以在交付物和审计日志里查看完整结果。";
+}
+
 function openDrawer(taskId) {
   state.selectedTaskId = taskId;
   renderDrawer();
@@ -247,100 +299,101 @@ function renderDrawer() {
   $("#drawer-title").textContent = task.title;
   $("#drawer-body").innerHTML = `
     <section class="detail-section">
-      <p>${task.description || "No description"}</p>
+      <div class="guide-box">${taskGuidance(task, artifacts)}</div>
+      <p>${task.description || "暂无描述"}</p>
       <div class="detail-grid">
-        <div class="detail-item"><span>Project</span><strong>${projectName(task.projectId)}</strong></div>
-        <div class="detail-item"><span>Owner</span><strong>${userName(task.ownerUserId)}</strong></div>
-        <div class="detail-item"><span>Status</span><strong>${statusText(task.status)}</strong></div>
-        <div class="detail-item"><span>Priority</span><strong>${task.priority}</strong></div>
-        <div class="detail-item"><span>Created</span><strong>${fmtDate(task.createdAt)}</strong></div>
-        <div class="detail-item"><span>Due date</span><strong>${task.dueDate || "Not set"}</strong></div>
+        <div class="detail-item"><span>项目</span><strong>${projectName(task.projectId)}</strong></div>
+        <div class="detail-item"><span>负责人</span><strong>${userName(task.ownerUserId)}</strong></div>
+        <div class="detail-item"><span>状态</span><strong>${statusText(task.status)}</strong></div>
+        <div class="detail-item"><span>优先级</span><strong>${task.priority}</strong></div>
+        <div class="detail-item"><span>创建时间</span><strong>${fmtDate(task.createdAt)}</strong></div>
+        <div class="detail-item"><span>截止日期</span><strong>${task.dueDate || "未设置"}</strong></div>
       </div>
       ${drawerActionButtons(task)}
     </section>
     <section class="detail-section">
-      <h3>Breakdown</h3>
-      ${parentTask ? `<div class="timeline-row"><strong>Parent task</strong><span>${parentTask.title}</span></div>` : ""}
+      <h3>任务拆分</h3>
+      ${parentTask ? `<div class="timeline-row"><strong>父任务</strong><span>${parentTask.title}</span></div>` : ""}
       ${subtasks.map((subtask) => `<div class="timeline-row">
         <strong>${subtask.title}</strong>
-        <span>${statusText(subtask.status)} · ${subtask.priority} · ${subtask.dueDate || "No due date"}</span>
-        <span>${subtask.description || "No description"}</span>
-      </div>`).join("") || `<div class="empty">No child tasks</div>`}
+        <span>${statusText(subtask.status)} · ${subtask.priority} · ${subtask.dueDate || "无截止日期"}</span>
+        <span>${subtask.description || "暂无描述"}</span>
+      </div>`).join("") || `<div class="empty">还没有子任务</div>`}
     </section>
 
     <section class="detail-section">
-      <h3>Project context</h3>
+      <h3>项目上下文</h3>
       <div class="detail-grid">
-        <div class="detail-item"><span>Project status</span><strong>${projectStatusText(project?.status)}</strong></div>
-        <div class="detail-item"><span>Health</span><strong>${healthText(project?.health)}</strong></div>
-        <div class="detail-item"><span>Repository</span><strong>${project?.repository || "Not linked"}</strong></div>
-        <div class="detail-item"><span>Knowledge sources</span><strong>${(project?.knowledgeSources || []).join(" / ") || "Not set"}</strong></div>
+        <div class="detail-item"><span>项目状态</span><strong>${projectStatusText(project?.status)}</strong></div>
+        <div class="detail-item"><span>健康度</span><strong>${healthText(project?.health)}</strong></div>
+        <div class="detail-item"><span>代码仓库</span><strong>${project?.repository || "未关联"}</strong></div>
+        <div class="detail-item"><span>知识来源</span><strong>${(project?.knowledgeSources || []).join(" / ") || "未设置"}</strong></div>
       </div>
     </section>
 
 
     <section class="detail-section">
-      <h3>Assigned agents</h3>
+      <h3>分配的 AI 员工</h3>
       ${employees.map((employee) => {
         const template = templateFor(employee);
         return `<div class="person-row">
           <strong>${employee.displayName} · ${employee.title}</strong>
-          <span>${teamName(employee.teamId)} · ${employee.permission} · Load ${employee.load}%</span>
-          <span>Role template: ${template?.name || "Not linked"} · Deliverables: ${(template?.deliverables || []).join(", ") || "Not set"}</span>
+          <span>${teamName(employee.teamId)} · ${employee.permission} · 负载 ${employee.load}%</span>
+          <span>角色模板：${template?.name || "未关联"} · 预期产出：${(template?.deliverables || []).join(", ") || "未设置"}</span>
           <span>${template?.summary || ""}</span>
         </div>`;
-      }).join("") || `<div class="empty">No assigned agents</div>`}
+      }).join("") || `<div class="empty">还没有分配 AI 员工</div>`}
       <form class="artifact-form" data-assign-form="${task.id}">
         <select name="employeeId" ${availableEmployees.length ? "" : "disabled"}>
-          ${availableEmployees.map((employee) => `<option value="${employee.id}">${employee.displayName} · ${employee.title}</option>`).join("") || `<option>No available agents</option>`}
+          ${availableEmployees.map((employee) => `<option value="${employee.id}">${employee.displayName} · ${employee.title}</option>`).join("") || `<option>没有可用 AI 员工</option>`}
         </select>
-        <button class="secondary-button" type="submit" ${availableEmployees.length ? "" : "disabled"}>Add agent</button>
+        <button class="secondary-button" type="submit" ${availableEmployees.length ? "" : "disabled"}>添加 AI 员工</button>
       </form>
     </section>
     <section class="detail-section">
-      <h3>Discussion</h3>
+      <h3>讨论</h3>
       ${chatMessages.map((message) => `<div class="timeline-row">
         <strong>${actorName(message)}</strong>
         <span>${fmtDate(message.createdAt)}</span>
         <span>${message.content}</span>
-      </div>`).join("") || `<div class="empty">No discussion yet</div>`}
-      <button class="primary-button" type="button" data-agent-discuss="${task.id}">Run discussion round</button>
+      </div>`).join("") || `<div class="empty">还没有讨论记录</div>`}
+      <button class="primary-button" type="button" data-agent-discuss="${task.id}">让 AI 员工讨论</button>
       <form class="artifact-form" data-chat-form="${task.id}">
-        <textarea name="content" required rows="3" maxlength="360" placeholder="Add context, decision notes, or instructions for agents"></textarea>
-        <button class="secondary-button" type="submit">Send note</button>
+        <textarea name="content" required rows="3" maxlength="360" placeholder="补充上下文、决策记录或给 AI 员工的指令。"></textarea>
+        <button class="secondary-button" type="submit">发送备注</button>
       </form>
     </section>
 
 
     <section class="detail-section">
-      <h3>Approval history</h3>
+      <h3>审批记录</h3>
       ${approvals.map((approval) => `<div class="timeline-row">
         <strong>${approval.title}</strong>
         <span>${statusText(approval.status)} · ${approval.risk} · ${fmtDate(approval.createdAt)}</span>
         <span>${approval.action}</span>
-      </div>`).join("") || `<div class="empty">No approvals</div>`}
+      </div>`).join("") || `<div class="empty">还没有审批记录</div>`}
     </section>
 
     <section class="detail-section">
-      <h3>Artifacts</h3>
+      <h3>交付物</h3>
       ${artifacts.map((artifact) => `<div class="timeline-row">
         <strong>${artifact.title}</strong>
         <span>${artifact.type} · ${employeeName(artifact.createdBy)} · ${fmtDate(artifact.updatedAt)}</span>
         <span>${artifact.summary}</span>
-      </div>`).join("") || `<div class="empty">No artifacts</div>`}
+      </div>`).join("") || `<div class="empty">还没有交付物</div>`}
       <form class="artifact-form" data-artifact-form="${task.id}">
-        <input name="title" required maxlength="80" placeholder="Artifact title" />
-        <textarea name="summary" required rows="3" maxlength="260" placeholder="Artifact summary"></textarea>
-        <button class="primary-button" type="submit">Add artifact</button>
+        <input name="title" required maxlength="80" placeholder="交付物标题" />
+        <textarea name="summary" required rows="3" maxlength="260" placeholder="交付物摘要"></textarea>
+        <button class="primary-button" type="submit">添加交付物</button>
       </form>
     </section>
 
     <section class="detail-section">
-      <h3>Related audit events</h3>
+      <h3>相关审计事件</h3>
       ${logs.map((log) => `<div class="timeline-row">
         <strong>${log.detail}</strong>
         <span>${log.actorType === "agent" ? employeeName(log.actorId) : userName(log.actorId)} · ${fmtDate(log.createdAt)}</span>
-      </div>`).join("") || `<div class="empty">No audit events</div>`}
+      </div>`).join("") || `<div class="empty">还没有审计事件</div>`}
     </section>
   `;
 }
@@ -349,8 +402,8 @@ function renderDrawer() {
 function drawerActionButtons(task) {
   const actions = [];
   if (task.status !== "done") {
-    actions.push(`<button class="primary-button" data-agent-run="${task.id}">Run agent</button>`);
-    actions.push(`<button class="secondary-button" data-breakdown-task="${task.id}">Break down</button>`);
+    actions.push(`<button class="primary-button" data-agent-run="${task.id}">让 AI 员工执行</button>`);
+    actions.push(`<button class="secondary-button" data-breakdown-task="${task.id}">拆分任务</button>`);
   }
   actions.push(taskActionButtons(task).replace('<div class="task-actions">', '').replace('</div>', ''));
   return `<div class="task-actions">${actions.join("")}</div>`;
@@ -369,16 +422,16 @@ function renderProjects() {
           <div class="project-top">
             <div>
               <h3>${project.name}</h3>
-              <p>${project.code} · ${team?.name || "No team"}</p>
+              <p>${project.code} · ${team?.name || "无团队"}</p>
             </div>
             <span class="pill ${project.health === "on-track" ? "done" : "waiting_approval"}">${healthText(project.health)}</span>
           </div>
           <div class="task-meta">
             <span class="pill">${projectStatusText(project.status)}</span>
-            <span class="pill">${taskCount}  tasks</span>
-            <span class="pill">${project.repository || "No repository"}</span>
+            <span class="pill">${taskCount} 个任务</span>
+            <span class="pill">${project.repository || "未关联仓库"}</span>
           </div>
-          <p>${(project.knowledgeSources || []).join(" / ") || "No knowledge sources"}</p>
+          <p>${(project.knowledgeSources || []).join(" / ") || "未设置知识来源"}</p>
         </article>
       `;
     })
@@ -441,7 +494,7 @@ function renderChrome() {
 
 function renderFilters() {
   const options = [
-    `<option value="all">All projects</option>`,
+    `<option value="all">全部项目</option>`,
     ...state.data.projects.map((project) => `<option value="${project.id}">${project.name}</option>`)
   ].join("");
   $("#project-filter").innerHTML = options;
@@ -480,13 +533,13 @@ function renderTasks() {
   $("#task-list").innerHTML =
     tasks
       .map((task) => {
-        const employees = task.assignedEmployeeIds.map(employeeName).join(", ") || "Unassigned";
+        const employees = task.assignedEmployeeIds.map(employeeName).join(", ") || "未分配";
         return `
           <article class="task-card" data-open-task="${task.id}">
             <div class="task-top">
               <div>
                 <h3>${task.title}</h3>
-                <p>${task.description || "No description"}</p>
+                <p>${task.description || "暂无描述"}</p>
               </div>
               <span class="pill ${task.status}">${statusText(task.status)}</span>
             </div>
@@ -494,13 +547,13 @@ function renderTasks() {
               <span class="pill ${task.priority.toLowerCase()}">${task.priority}</span>
               <span class="pill">${projectName(task.projectId)}</span>
               <span class="pill">${employees}</span>
-              <span class="pill">${task.dueDate || "No due date"}</span>
+              <span class="pill">${task.dueDate || "无截止日期"}</span>
             </div>
             ${taskActionButtons(task)}
           </article>
         `;
       })
-      .join("") || `<div class="empty">No work items</div>`;
+      .join("") || `<div class="empty">没有符合条件的任务</div>`;
 }
 
 function renderEmployees() {
@@ -515,7 +568,7 @@ function renderEmployees() {
                 <h3>${employee.displayName} · ${employee.title}</h3>
                 <p>${template?.summary || ""}</p>
               </div>
-              <span class="pill">${employee.status === "busy" ? "Busy" : "Available"}</span>
+              <span class="pill">${employee.status === "busy" ? "忙碌" : "可用"}</span>
             </div>
             <div class="employee-meta">
               <span class="pill">${teamName(employee.teamId)}</span>
@@ -552,14 +605,14 @@ function renderApprovals() {
           ${
             approval.status === "pending"
               ? `<div class="approval-actions">
-                  <button class="secondary-button" data-reject="${approval.id}">Reject</button>
-                  <button class="primary-button" data-approve="${approval.id}">Approve</button>
+                  <button class="secondary-button" data-reject="${approval.id}">拒绝</button>
+                  <button class="primary-button" data-approve="${approval.id}">批准</button>
                 </div>`
               : ""
           }
         </article>
       `)
-      .join("") || `<div class="empty">No pending approvals</div>`;
+      .join("") || `<div class="empty">没有待处理审批</div>`;
 }
 
 function renderArtifacts() {
@@ -572,7 +625,7 @@ function renderArtifacts() {
           <small>${artifact.type} · ${employeeName(artifact.createdBy)} · ${fmtDate(artifact.updatedAt)}</small>
         </article>
       `)
-      .join("") || `<div class="empty">No artifacts</div>`;
+      .join("") || `<div class="empty">还没有交付物</div>`;
 }
 
 function renderLogs() {
@@ -671,9 +724,9 @@ async function requestApproval(taskId) {
   await api(`/api/tasks/${taskId}/approvals`, {
     method: "POST",
     body: JSON.stringify({
-      title: `Review request: ${task.title}`,
+      title: `审批请求：${task.title}`,
       requesterEmployeeId: task.assignedEmployeeIds[0],
-      action: "Allow the assigned agent to continue with an auditable write action",
+      action: "允许已分配的 AI 员工继续执行，并把写入动作记录到审计日志。",
       risk: "medium"
     })
   });
@@ -806,6 +859,12 @@ function bindEvents() {
     const closeButton = target.closest("[data-close-modal]");
     if (closeButton instanceof HTMLElement) {
       closeModal(closeButton);
+      return;
+    }
+
+    const taskTemplateButton = target.closest("[data-task-template]");
+    if (taskTemplateButton instanceof HTMLElement) {
+      applyTaskTemplate(taskTemplateButton.dataset.taskTemplate);
       return;
     }
 

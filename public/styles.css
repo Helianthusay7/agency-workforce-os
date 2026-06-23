@@ -219,6 +219,7 @@ h1 {
   display: grid;
   grid-template-columns: minmax(560px, 1fr) 360px;
   grid-template-areas:
+    "onboarding onboarding"
     "projects agents"
     "tasks approvals"
     "tasks artifacts"
@@ -242,6 +243,7 @@ h1 {
   box-shadow: var(--shadow);
 }
 
+.onboarding-panel { grid-area: onboarding; }
 .project-panel { grid-area: projects; }
 .employee-panel { grid-area: agents; }
 .task-panel { grid-area: tasks; min-height: 620px; }
@@ -253,7 +255,9 @@ h1 {
 
 .content-grid.view-dashboard {
   grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
-  grid-template-areas: "projects tasks";
+  grid-template-areas:
+    "onboarding onboarding"
+    "projects tasks";
 }
 
 .content-grid.view-tasks {
@@ -287,6 +291,36 @@ h1 {
 .panel-header h2 { margin-bottom: 2px; font-size: 14px; font-weight: 650; }
 .panel-header p { margin-bottom: 0; color: var(--muted); font-size: 12px; }
 .panel-header select { max-width: 180px; }
+
+.onboarding-body {
+  display: grid;
+  gap: 12px;
+  padding: 12px 14px 14px;
+}
+
+.workflow-steps,
+.template-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workflow-steps span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: #374151;
+  background: #f9fafb;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.template-actions button {
+  flex: 1 1 150px;
+}
 
 select,
 input,
@@ -546,6 +580,16 @@ label {
 .detail-section:last-child { border-bottom: 0; }
 .detail-section h3 { margin: 0; font-size: 13px; font-weight: 650; }
 
+.guide-box {
+  padding: 10px 11px;
+  border: 1px solid #bfdbfe;
+  border-radius: 7px;
+  color: #1e3a8a;
+  background: #eff6ff;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 
 .detail-item,
@@ -575,6 +619,7 @@ label {
   .content-grid.view-approvals {
     grid-template-columns: 1fr;
     grid-template-areas:
+      "onboarding"
       "projects"
       "tasks"
       "agents"
