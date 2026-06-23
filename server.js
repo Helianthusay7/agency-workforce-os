@@ -435,6 +435,7 @@ function runLlm(prompt, task, employee, template, project) {
 function buildExecutionTrace({ taskSnapshot, agentSnapshot, prompt, llmResult, artifact, startedAt, completedAt }) {
   return {
     id: id("exec"),
+    status: "succeeded",
     taskId: taskSnapshot.id,
     agentId: agentSnapshot.id,
     artifactId: artifact.id,
@@ -455,7 +456,32 @@ function buildExecutionTrace({ taskSnapshot, agentSnapshot, prompt, llmResult, a
     },
     startedAt,
     completedAt,
-    durationMs: new Date(completedAt).getTime() - new Date(startedAt).getTime()
+    durationMs: new Date(completedAt).getTime() - new Date(startedAt).getTime(),
+    error: null
+  };
+}
+
+function buildFailedExecutionTrace({ taskSnapshot, agentSnapshot, prompt, llmResult, error, startedAt, completedAt }) {
+  return {
+    id: id("exec"),
+    status: "failed",
+    taskId: taskSnapshot.id,
+    agentId: agentSnapshot.id,
+    artifactId: null,
+    provider: llmResult?.provider || "unknown",
+    model: llmResult?.model || agentSnapshot.model || "unknown",
+    inputTask: taskSnapshot,
+    agent: agentSnapshot,
+    prompt,
+    llmOutput: llmResult?.output || "",
+    finalArtifact: null,
+    startedAt,
+    completedAt,
+    durationMs: new Date(completedAt).getTime() - new Date(startedAt).getTime(),
+    error: {
+      message: error.message || "Agent Runtime execution failed",
+      name: error.name || "Error"
+    }
   };
 }
 
@@ -817,51 +843,77 @@ async function handleApi(req, res, url) {
     const project = state.projects.find((item) => item.id === task.projectId);
     const taskSnapshot = snapshotTask(task);
     const agentSnapshot = snapshotAgent(employee, template);
-    const prompt = buildAgentPrompt(state, task, employee, template, project);
-    const llmResult = runLlm(prompt, task, employee, template, project);
-    const completedAt = now();
-    const artifact = {
-      id: id("art"),
-      taskId: task.id,
-      type: "result",
-      title: `Agent Runtime 输出：${task.title}`,
-      createdBy: employee.id,
-      updatedAt: completedAt,
-      summary: llmResult.output
-    };
-    const executionTrace = buildExecutionTrace({
-      taskSnapshot,
-      agentSnapshot,
-      prompt,
-      llmResult,
-      artifact,
-      startedAt,
-      completedAt
-    });
-    artifact.executionTraceId = executionTrace.id;
+    let prompt = "";
+    let llmResult = null;
 
-    task.status = "running";
-    employee.status = "busy";
-    employee.currentTaskId = task.id;
-    employee.load = Math.min(95, Number(employee.load || 0) + 10);
-    state.artifacts.unshift(artifact);
-    state.executionTraces.unshift(executionTrace);
-    addLog(state, {
-      actorType: "agent",
-      actorId: employee.id,
-      event: "ran_agent_runtime",
-      targetId: task.id,
-      detail: `${employee.displayName} 执行任务并生成交付物：${artifact.title}；trace=${executionTrace.id}`
-    });
-    addLog(state, {
-      actorType: "agent",
-      actorId: employee.id,
-      event: "created_artifact",
-      targetId: artifact.id,
-      detail: `创建交付物：${artifact.title}`
-    });
-    await saveState(state);
-    sendJson(res, 201, { task, employee, artifact, executionTrace });
+    try {
+      prompt = buildAgentPrompt(state, task, employee, template, project);
+      llmResult = runLlm(prompt, task, employee, template, project);
+      const completedAt = now();
+      const artifact = {
+        id: id("art"),
+        taskId: task.id,
+        type: "result",
+        title: `Agent Runtime 输出：${task.title}`,
+        createdBy: employee.id,
+        updatedAt: completedAt,
+        summary: llmResult.output
+      };
+      const executionTrace = buildExecutionTrace({
+        taskSnapshot,
+        agentSnapshot,
+        prompt,
+        llmResult,
+        artifact,
+        startedAt,
+        completedAt
+      });
+      artifact.executionTraceId = executionTrace.id;
+
+      task.status = "running";
+      employee.status = "busy";
+      employee.currentTaskId = task.id;
+      employee.load = Math.min(95, Number(employee.load || 0) + 10);
+      state.artifacts.unshift(artifact);
+      state.executionTraces.unshift(executionTrace);
+      addLog(state, {
+        actorType: "agent",
+        actorId: employee.id,
+        event: "ran_agent_runtime",
+        targetId: task.id,
+        detail: `${employee.displayName} 执行任务并生成交付物：${artifact.title}；trace=${executionTrace.id}`
+      });
+      addLog(state, {
+        actorType: "agent",
+        actorId: employee.id,
+        event: "created_artifact",
+        targetId: artifact.id,
+        detail: `创建交付物：${artifact.title}`
+      });
+      await saveState(state);
+      sendJson(res, 201, { task, employee, artifact, executionTrace });
+    } catch (error) {
+      const completedAt = now();
+      const executionTrace = buildFailedExecutionTrace({
+        taskSnapshot,
+        agentSnapshot,
+        prompt,
+        llmResult,
+        error,
+        startedAt,
+        completedAt
+      });
+      state.executionTraces.unshift(executionTrace);
+      addLog(state, {
+        actorType: "agent",
+        actorId: employee.id,
+        event: "failed_agent_runtime",
+        targetId: task.id,
+        detail: `${employee.displayName} 执行失败：${executionTrace.error.message}；trace=${executionTrace.id}`
+      });
+      await saveState(state);
+      sendJson(res, 500, { error: executionTrace.error.message, executionTrace });
+    }
     return;
   }
 
