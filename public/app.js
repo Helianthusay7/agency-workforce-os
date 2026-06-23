@@ -227,6 +227,10 @@ function renderDrawer() {
         <span>${message.content}</span>
       </div>`).join("") || `<div class="empty">暂无讨论消息</div>`}
       <button class="primary-button" type="button" data-agent-discuss="${task.id}">发起一轮讨论</button>
+      <form class="artifact-form" data-chat-form="${task.id}">
+        <textarea name="content" required rows="3" maxlength="360" placeholder="输入人工备注或给 AI 员工的补充上下文"></textarea>
+        <button class="secondary-button" type="submit">发送备注</button>
+      </form>
     </section>
 
 
@@ -525,6 +529,16 @@ async function load() {
 
 
 
+
+async function sendChatMessage(taskId, content) {
+  await api(`/api/tasks/${taskId}/chat/messages`, {
+    method: "POST",
+    body: JSON.stringify({ content })
+  });
+  await load();
+  if (state.selectedTaskId) renderDrawer();
+}
+
 async function assignEmployee(taskId, employeeId) {
   await api(`/api/tasks/${taskId}/assign`, {
     method: "POST",
@@ -637,6 +651,15 @@ function bindEvents() {
     const formElement = event.target;
     if (!(formElement instanceof HTMLFormElement)) return;
     
+    
+    const chatTaskId = formElement.dataset.chatForm;
+    if (chatTaskId) {
+      event.preventDefault();
+      const form = new FormData(formElement);
+      await sendChatMessage(chatTaskId, form.get("content"));
+      formElement.reset();
+      return;
+    }
     const assignTaskId = formElement.dataset.assignForm;
     if (assignTaskId) {
       event.preventDefault();

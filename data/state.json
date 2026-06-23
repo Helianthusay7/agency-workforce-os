@@ -347,6 +347,15 @@
   ],
   "auditLogs": [
     {
+      "id": "log_1sws7fgg5t",
+      "createdAt": "2026-06-23T09:41:52.721Z",
+      "actorType": "user",
+      "actorId": "usr_chen",
+      "event": "created_chat_message",
+      "targetId": "task_runtime",
+      "detail": "新增任务讨论消息：设计 Agent Runtime Worker"
+    },
+    {
       "id": "log_xp85ntas4f",
       "createdAt": "2026-06-23T09:37:28.287Z",
       "actorType": "user",
@@ -514,6 +523,15 @@
       "actorId": "emp_rhea",
       "content": "Rhea（Code Reviewer）：我建议围绕“设计 Agent Runtime Worker”先推进 阻塞问题。当前项目是 AI 员工工作站，需要保持最小改动、明确交付物，并把需要人工确认的动作进入审批。",
       "createdAt": "2026-06-23T08:51:52.697Z"
+    },
+    {
+      "id": "msg_hjzeh7gg5t",
+      "roomId": "room_task_runtime",
+      "taskId": "task_runtime",
+      "actorType": "user",
+      "actorId": "usr_chen",
+      "content": "Human note: please keep the runtime implementation minimal and reviewable.",
+      "createdAt": "2026-06-23T09:41:52.721Z"
     }
   ]
 }
