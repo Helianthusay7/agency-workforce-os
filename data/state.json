@@ -172,8 +172,8 @@
       "model": "gpt-5",
       "permission": "Suggest",
       "status": "busy",
-      "load": 51,
-      "currentTaskId": "task_wm667f33hu"
+      "load": 61,
+      "currentTaskId": "task_tyadw533hu"
     },
     {
       "id": "emp_mason",
@@ -231,7 +231,7 @@
       "title": "明确 多人团队 MVP 范围 的目标和验收标准",
       "projectId": "prj_workstation",
       "ownerUserId": "usr_lin",
-      "status": "todo",
+      "status": "running",
       "priority": "P0",
       "description": "基于父任务“定义多人团队 MVP 范围”梳理目标、边界、输入输出和验收标准。",
       "assignedEmployeeIds": [
@@ -360,6 +360,16 @@
   ],
   "artifacts": [
     {
+      "id": "art_dj81pa9qz4",
+      "taskId": "task_tyadw533hu",
+      "type": "result",
+      "title": "Agent Runtime 输出：明确 多人团队 MVP 范围 的目标和验收标准",
+      "createdBy": "emp_iris",
+      "updatedAt": "2026-06-23T13:48:36.688Z",
+      "summary": "Iris 已根据任务上下文完成一次本地 Agent Runtime 执行。\n\n项目：AI 员工工作站\n\n任务：明确 多人团队 MVP 范围 的目标和验收标准\n\n角色：Product Manager\n\n交付方向：PRD、任务拆解、验收标准\n\n结果摘要：已分析任务目标、当前系统约束和可交付范围，生成一份可进入下一轮人工审阅的执行结果。\n\nPrompt snapshot:\nTask: 明确 多人团队 MVP 范围 的目标和验收标准\nStatus: todo\nProject: AI 员工工作站\nAgent: Iris / AI 产品经理\nRole: Product Manager\nRole summary: 把模糊目标拆成范围、验收标准和排期。\nTask description: 基于父任务“定义多人团队 MVP 范围”梳理目标、边界、输入输出和验收标准。\nExpected deliverables: PRD, 任务拆解, 验收标准",
+      "executionTraceId": "exec_myrgfg9qz4"
+    },
+    {
       "id": "art_jsgbci33hu",
       "taskId": "task_scope",
       "type": "plan",
@@ -415,6 +425,24 @@
     }
   ],
   "auditLogs": [
+    {
+      "id": "log_2r3rhr9qz4",
+      "createdAt": "2026-06-23T13:48:36.688Z",
+      "actorType": "agent",
+      "actorId": "emp_iris",
+      "event": "created_artifact",
+      "targetId": "art_dj81pa9qz4",
+      "detail": "创建交付物：Agent Runtime 输出：明确 多人团队 MVP 范围 的目标和验收标准"
+    },
+    {
+      "id": "log_l7fkeb9qz4",
+      "createdAt": "2026-06-23T13:48:36.688Z",
+      "actorType": "agent",
+      "actorId": "emp_iris",
+      "event": "ran_agent_runtime",
+      "targetId": "task_tyadw533hu",
+      "detail": "Iris 执行任务并生成交付物：Agent Runtime 输出：明确 多人团队 MVP 范围 的目标和验收标准；trace=exec_myrgfg9qz4"
+    },
     {
       "id": "log_8p89q733hv",
       "createdAt": "2026-06-23T09:59:29.395Z",
@@ -619,6 +647,53 @@
       "actorId": "usr_chen",
       "content": "Human note: please keep the runtime implementation minimal and reviewable.",
       "createdAt": "2026-06-23T09:41:52.721Z"
+    }
+  ],
+  "executionTraces": [
+    {
+      "id": "exec_myrgfg9qz4",
+      "taskId": "task_tyadw533hu",
+      "agentId": "emp_iris",
+      "artifactId": "art_dj81pa9qz4",
+      "provider": "mock",
+      "model": "gpt-5",
+      "inputTask": {
+        "id": "task_tyadw533hu",
+        "title": "明确 多人团队 MVP 范围 的目标和验收标准",
+        "projectId": "prj_workstation",
+        "ownerUserId": "usr_lin",
+        "status": "todo",
+        "priority": "P0",
+        "description": "基于父任务“定义多人团队 MVP 范围”梳理目标、边界、输入输出和验收标准。",
+        "assignedEmployeeIds": [
+          "emp_iris"
+        ],
+        "dueDate": "2026-06-27",
+        "parentTaskId": "task_scope"
+      },
+      "agent": {
+        "id": "emp_iris",
+        "displayName": "Iris",
+        "title": "AI 产品经理",
+        "templateId": "tpl_pm",
+        "role": "Product Manager",
+        "model": "gpt-5",
+        "permission": "Suggest"
+      },
+      "prompt": "Task: 明确 多人团队 MVP 范围 的目标和验收标准\nStatus: todo\nProject: AI 员工工作站\nAgent: Iris / AI 产品经理\nRole: Product Manager\nRole summary: 把模糊目标拆成范围、验收标准和排期。\nTask description: 基于父任务“定义多人团队 MVP 范围”梳理目标、边界、输入输出和验收标准。\nExpected deliverables: PRD, 任务拆解, 验收标准",
+      "llmOutput": "Iris 已根据任务上下文完成一次本地 Agent Runtime 执行。\n\n项目：AI 员工工作站\n\n任务：明确 多人团队 MVP 范围 的目标和验收标准\n\n角色：Product Manager\n\n交付方向：PRD、任务拆解、验收标准\n\n结果摘要：已分析任务目标、当前系统约束和可交付范围，生成一份可进入下一轮人工审阅的执行结果。\n\nPrompt snapshot:\nTask: 明确 多人团队 MVP 范围 的目标和验收标准\nStatus: todo\nProject: AI 员工工作站\nAgent: Iris / AI 产品经理\nRole: Product Manager\nRole summary: 把模糊目标拆成范围、验收标准和排期。\nTask description: 基于父任务“定义多人团队 MVP 范围”梳理目标、边界、输入输出和验收标准。\nExpected deliverables: PRD, 任务拆解, 验收标准",
+      "finalArtifact": {
+        "id": "art_dj81pa9qz4",
+        "taskId": "task_tyadw533hu",
+        "type": "result",
+        "title": "Agent Runtime 输出：明确 多人团队 MVP 范围 的目标和验收标准",
+        "createdBy": "emp_iris",
+        "summary": "Iris 已根据任务上下文完成一次本地 Agent Runtime 执行。\n\n项目：AI 员工工作站\n\n任务：明确 多人团队 MVP 范围 的目标和验收标准\n\n角色：Product Manager\n\n交付方向：PRD、任务拆解、验收标准\n\n结果摘要：已分析任务目标、当前系统约束和可交付范围，生成一份可进入下一轮人工审阅的执行结果。\n\nPrompt snapshot:\nTask: 明确 多人团队 MVP 范围 的目标和验收标准\nStatus: todo\nProject: AI 员工工作站\nAgent: Iris / AI 产品经理\nRole: Product Manager\nRole summary: 把模糊目标拆成范围、验收标准和排期。\nTask description: 基于父任务“定义多人团队 MVP 范围”梳理目标、边界、输入输出和验收标准。\nExpected deliverables: PRD, 任务拆解, 验收标准",
+        "updatedAt": "2026-06-23T13:48:36.688Z"
+      },
+      "startedAt": "2026-06-23T13:48:36.687Z",
+      "completedAt": "2026-06-23T13:48:36.688Z",
+      "durationMs": 1
     }
   ]
 }

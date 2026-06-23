@@ -318,6 +318,37 @@ function ensureChatState(state) {
   if (!Array.isArray(state.chatMessages)) state.chatMessages = [];
 }
 
+function ensureRuntimeState(state) {
+  if (!Array.isArray(state.executionTraces)) state.executionTraces = [];
+}
+
+function snapshotTask(task) {
+  return {
+    id: task.id,
+    title: task.title,
+    projectId: task.projectId,
+    ownerUserId: task.ownerUserId,
+    status: task.status,
+    priority: task.priority,
+    description: task.description || "",
+    assignedEmployeeIds: [...(task.assignedEmployeeIds || [])],
+    dueDate: task.dueDate || "",
+    parentTaskId: task.parentTaskId || null
+  };
+}
+
+function snapshotAgent(employee, template) {
+  return {
+    id: employee.id,
+    displayName: employee.displayName,
+    title: employee.title,
+    templateId: employee.templateId,
+    role: template?.name || employee.title,
+    model: employee.model,
+    permission: employee.permission
+  };
+}
+
 function ensureTaskChatRoom(state, task) {
   ensureChatState(state);
   let room = state.chatRooms.find((item) => item.taskId === task.id);
@@ -393,6 +424,41 @@ function runMockLlm(prompt, task, employee, template, project) {
   ].join("\n\n");
 }
 
+function runLlm(prompt, task, employee, template, project) {
+  return {
+    provider: "mock",
+    model: employee.model || "mock-local",
+    output: runMockLlm(prompt, task, employee, template, project)
+  };
+}
+
+function buildExecutionTrace({ taskSnapshot, agentSnapshot, prompt, llmResult, artifact, startedAt, completedAt }) {
+  return {
+    id: id("exec"),
+    taskId: taskSnapshot.id,
+    agentId: agentSnapshot.id,
+    artifactId: artifact.id,
+    provider: llmResult.provider,
+    model: llmResult.model,
+    inputTask: taskSnapshot,
+    agent: agentSnapshot,
+    prompt,
+    llmOutput: llmResult.output,
+    finalArtifact: {
+      id: artifact.id,
+      taskId: artifact.taskId,
+      type: artifact.type,
+      title: artifact.title,
+      createdBy: artifact.createdBy,
+      summary: artifact.summary,
+      updatedAt: artifact.updatedAt
+    },
+    startedAt,
+    completedAt,
+    durationMs: new Date(completedAt).getTime() - new Date(startedAt).getTime()
+  };
+}
+
 function deriveDashboard(state) {
   const activeTasks = state.tasks.filter((task) => task.status !== "done").length;
   const pendingApprovals = state.approvals.filter((approval) => approval.status === "pending").length;
@@ -412,6 +478,7 @@ async function handleApi(req, res, url) {
 
   if (req.method === "GET" && pathname === "/api/state") {
     ensureChatState(state);
+    ensureRuntimeState(state);
     sendJson(res, 200, { ...state, dashboard: deriveDashboard(state) });
     return;
   }
@@ -730,40 +797,61 @@ async function handleApi(req, res, url) {
 
   const taskRunMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/run$/);
   if (req.method === "POST" && taskRunMatch) {
+    const body = await readBody(req);
+    ensureRuntimeState(state);
+
     const task = state.tasks.find((item) => item.id === taskRunMatch[1]);
     if (!task) return notFound(res);
 
-    const employee = state.employees.find((item) => task.assignedEmployeeIds.includes(item.id));
+    const employee = state.employees.find((item) => {
+      if (body.employeeId) return item.id === body.employeeId && task.assignedEmployeeIds.includes(item.id);
+      return task.assignedEmployeeIds.includes(item.id);
+    });
     if (!employee) {
       sendJson(res, 400, { error: "Task has no assigned AI employee" });
       return;
     }
 
+    const startedAt = now();
     const template = state.agentTemplates.find((item) => item.id === employee.templateId);
     const project = state.projects.find((item) => item.id === task.projectId);
+    const taskSnapshot = snapshotTask(task);
+    const agentSnapshot = snapshotAgent(employee, template);
     const prompt = buildAgentPrompt(state, task, employee, template, project);
-    const result = runMockLlm(prompt, task, employee, template, project);
+    const llmResult = runLlm(prompt, task, employee, template, project);
+    const completedAt = now();
     const artifact = {
       id: id("art"),
       taskId: task.id,
       type: "result",
       title: `Agent Runtime 输出：${task.title}`,
       createdBy: employee.id,
-      updatedAt: now(),
-      summary: result
+      updatedAt: completedAt,
+      summary: llmResult.output
     };
+    const executionTrace = buildExecutionTrace({
+      taskSnapshot,
+      agentSnapshot,
+      prompt,
+      llmResult,
+      artifact,
+      startedAt,
+      completedAt
+    });
+    artifact.executionTraceId = executionTrace.id;
 
     task.status = "running";
     employee.status = "busy";
     employee.currentTaskId = task.id;
     employee.load = Math.min(95, Number(employee.load || 0) + 10);
     state.artifacts.unshift(artifact);
+    state.executionTraces.unshift(executionTrace);
     addLog(state, {
       actorType: "agent",
       actorId: employee.id,
       event: "ran_agent_runtime",
       targetId: task.id,
-      detail: `${employee.displayName} 执行任务并生成交付物：${artifact.title}`
+      detail: `${employee.displayName} 执行任务并生成交付物：${artifact.title}；trace=${executionTrace.id}`
     });
     addLog(state, {
       actorType: "agent",
@@ -773,7 +861,7 @@ async function handleApi(req, res, url) {
       detail: `创建交付物：${artifact.title}`
     });
     await saveState(state);
-    sendJson(res, 201, { task, employee, artifact });
+    sendJson(res, 201, { task, employee, artifact, executionTrace });
     return;
   }
 
