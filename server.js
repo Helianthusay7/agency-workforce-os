@@ -424,12 +424,136 @@ function runMockLlm(prompt, task, employee, template, project) {
   ].join("\n\n");
 }
 
-function runLlm(prompt, task, employee, template, project) {
+function extractOpenAiText(payload) {
+  if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text;
+  }
+
+  const chunks = [];
+  for (const item of payload?.output || []) {
+    for (const content of item.content || []) {
+      if (typeof content.text === "string") chunks.push(content.text);
+    }
+  }
+  return chunks.join("\n").trim();
+}
+
+function getLlmConfig(employee) {
+  const requestedProvider = (process.env.AGENCY_LLM_PROVIDER || "mock").toLowerCase();
+  return {
+    requestedProvider,
+    model: process.env.AGENCY_LLM_MODEL || employee.model || "mock-local",
+    allowMockFallback: process.env.AGENCY_LLM_ALLOW_MOCK_FALLBACK !== "false",
+    timeoutMs: Number(process.env.AGENCY_LLM_TIMEOUT_MS || 6000)
+  };
+}
+
+function runMockAdapter(prompt, task, employee, template, project, metadata = {}) {
   return {
     provider: "mock",
-    model: employee.model || "mock-local",
-    output: runMockLlm(prompt, task, employee, template, project)
+    requestedProvider: metadata.requestedProvider || "mock",
+    model: metadata.model || employee.model || "mock-local",
+    output: runMockLlm(prompt, task, employee, template, project),
+    fallback: Boolean(metadata.fallback),
+    fallbackReason: metadata.fallbackReason || "",
+    responseId: null
   };
+}
+
+async function runOpenAiAdapter(prompt, task, employee, template, project, config) {
+  if (!process.env.OPENAI_API_KEY) {
+    if (config.allowMockFallback) {
+      return runMockAdapter(prompt, task, employee, template, project, {
+        requestedProvider: "openai",
+        model: config.model,
+        fallback: true,
+        fallbackReason: "OPENAI_API_KEY is not configured"
+      });
+    }
+    const error = new Error("OPENAI_API_KEY is not configured");
+    error.provider = "openai";
+    error.model = config.model;
+    throw error;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+  let response;
+  try {
+    response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model: config.model,
+        input: prompt
+      })
+    });
+  } catch (error) {
+    const message = error.name === "AbortError" ? `OpenAI request timed out after ${config.timeoutMs}ms` : error.message;
+    if (config.allowMockFallback) {
+      return runMockAdapter(prompt, task, employee, template, project, {
+        requestedProvider: "openai",
+        model: config.model,
+        fallback: true,
+        fallbackReason: message
+      });
+    }
+    error.provider = "openai";
+    error.model = config.model;
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = payload?.error?.message || `OpenAI request failed with HTTP ${response.status}`;
+    if (config.allowMockFallback) {
+      return runMockAdapter(prompt, task, employee, template, project, {
+        requestedProvider: "openai",
+        model: config.model,
+        fallback: true,
+        fallbackReason: message
+      });
+    }
+    const error = new Error(message);
+    error.provider = "openai";
+    error.model = config.model;
+    throw error;
+  }
+
+  const output = extractOpenAiText(payload);
+  if (!output) {
+    const error = new Error("OpenAI response did not contain text output");
+    error.provider = "openai";
+    error.model = config.model;
+    throw error;
+  }
+
+  return {
+    provider: "openai",
+    requestedProvider: "openai",
+    model: config.model,
+    output,
+    fallback: false,
+    fallbackReason: "",
+    responseId: payload.id || null
+  };
+}
+
+async function runLlm(prompt, task, employee, template, project) {
+  const config = getLlmConfig(employee);
+  if (config.requestedProvider === "openai") {
+    return runOpenAiAdapter(prompt, task, employee, template, project, config);
+  }
+  return runMockAdapter(prompt, task, employee, template, project, {
+    requestedProvider: config.requestedProvider,
+    model: config.model
+  });
 }
 
 function buildExecutionTrace({ taskSnapshot, agentSnapshot, prompt, llmResult, artifact, startedAt, completedAt }) {
@@ -440,7 +564,11 @@ function buildExecutionTrace({ taskSnapshot, agentSnapshot, prompt, llmResult, a
     agentId: agentSnapshot.id,
     artifactId: artifact.id,
     provider: llmResult.provider,
+    requestedProvider: llmResult.requestedProvider || llmResult.provider,
     model: llmResult.model,
+    fallback: Boolean(llmResult.fallback),
+    fallbackReason: llmResult.fallbackReason || "",
+    responseId: llmResult.responseId || null,
     inputTask: taskSnapshot,
     agent: agentSnapshot,
     prompt,
@@ -468,8 +596,12 @@ function buildFailedExecutionTrace({ taskSnapshot, agentSnapshot, prompt, llmRes
     taskId: taskSnapshot.id,
     agentId: agentSnapshot.id,
     artifactId: null,
-    provider: llmResult?.provider || "unknown",
-    model: llmResult?.model || agentSnapshot.model || "unknown",
+    provider: llmResult?.provider || error.provider || "unknown",
+    requestedProvider: llmResult?.requestedProvider || error.provider || "unknown",
+    model: llmResult?.model || error.model || agentSnapshot.model || "unknown",
+    fallback: Boolean(llmResult?.fallback),
+    fallbackReason: llmResult?.fallbackReason || "",
+    responseId: llmResult?.responseId || null,
     inputTask: taskSnapshot,
     agent: agentSnapshot,
     prompt,
@@ -848,7 +980,7 @@ async function handleApi(req, res, url) {
 
     try {
       prompt = buildAgentPrompt(state, task, employee, template, project);
-      llmResult = runLlm(prompt, task, employee, template, project);
+      llmResult = await runLlm(prompt, task, employee, template, project);
       const completedAt = now();
       const artifact = {
         id: id("art"),
