@@ -338,6 +338,29 @@ function ensureTaskChatRoom(state, task) {
   return room;
 }
 
+
+function buildSubtasks(task, project) {
+  const base = task.title.replace(/^定义|设计|准备|实现/, "").trim() || task.title;
+  return [
+    {
+      title: `明确 ${base} 的目标和验收标准`,
+      description: `基于父任务“${task.title}”梳理目标、边界、输入输出和验收标准。`
+    },
+    {
+      title: `设计 ${base} 的执行流程`,
+      description: `说明 ${project?.name || "当前项目"} 中该任务的执行步骤、依赖对象和风险点。`
+    },
+    {
+      title: `产出 ${base} 的最小交付物`,
+      description: `在不重构系统的前提下，产出可审阅的文档、代码或结果草案。`
+    },
+    {
+      title: `审查 ${base} 的结果并沉淀改进项`,
+      description: `检查交付物质量、遗漏风险和下一步优化建议。`
+    }
+  ];
+}
+
 function buildDiscussionMessage(task, employee, template, project, index) {
   const role = template?.name || employee.title;
   const focus = template?.deliverables?.[index % Math.max(template.deliverables.length, 1)] || "下一步交付";
@@ -551,6 +574,68 @@ async function handleApi(req, res, url) {
     sendJson(res, 201, approval);
     return;
   }
+  const taskBreakdownMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/breakdown$/);
+  if (req.method === "POST" && taskBreakdownMatch) {
+    const task = state.tasks.find((item) => item.id === taskBreakdownMatch[1]);
+    if (!task) return notFound(res);
+
+    const existingSubtasks = state.tasks.filter((item) => item.parentTaskId === task.id);
+    if (existingSubtasks.length) {
+      sendJson(res, 200, { parentTask: task, subtasks: existingSubtasks, reused: true });
+      return;
+    }
+
+    const project = state.projects.find((item) => item.id === task.projectId);
+    const pmEmployee = state.employees.find((employee) => task.assignedEmployeeIds.includes(employee.id)) || state.employees.find((employee) => employee.templateId === "tpl_pm") || state.employees[0];
+    const specs = buildSubtasks(task, project);
+    const subtasks = specs.map((spec, index) => ({
+      id: id("task"),
+      parentTaskId: task.id,
+      title: spec.title,
+      projectId: task.projectId,
+      ownerUserId: task.ownerUserId,
+      status: "todo",
+      priority: index === 0 ? task.priority : "P2",
+      description: spec.description,
+      assignedEmployeeIds: pmEmployee ? [pmEmployee.id] : [],
+      dueDate: task.dueDate || "",
+      createdAt: now()
+    }));
+
+    state.tasks.unshift(...subtasks);
+    for (const subtask of subtasks) {
+      assignEmployeesToTask(state, subtask, subtask.assignedEmployeeIds, 6);
+    }
+
+    const artifact = {
+      id: id("art"),
+      taskId: task.id,
+      type: "plan",
+      title: `任务拆解计划：${task.title}`,
+      createdBy: pmEmployee?.id || task.ownerUserId,
+      updatedAt: now(),
+      summary: subtasks.map((subtask, index) => `${index + 1}. ${subtask.title}`).join("\n")
+    };
+    state.artifacts.unshift(artifact);
+    addLog(state, {
+      actorType: pmEmployee ? "agent" : "user",
+      actorId: pmEmployee?.id || task.ownerUserId,
+      event: "broke_down_task",
+      targetId: task.id,
+      detail: `拆解任务：${task.title}`
+    });
+    addLog(state, {
+      actorType: pmEmployee ? "agent" : "user",
+      actorId: pmEmployee?.id || task.ownerUserId,
+      event: "created_artifact",
+      targetId: artifact.id,
+      detail: `创建交付物：${artifact.title}`
+    });
+    await saveState(state);
+    sendJson(res, 201, { parentTask: task, subtasks, artifact });
+    return;
+  }
+
   const taskChatMessageMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/chat\/messages$/);
   if (req.method === "POST" && taskChatMessageMatch) {
     const body = await readBody(req);

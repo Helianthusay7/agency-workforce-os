@@ -171,9 +171,9 @@
       "teamId": "team_product",
       "model": "gpt-5",
       "permission": "Suggest",
-      "status": "available",
-      "load": 27,
-      "currentTaskId": null
+      "status": "busy",
+      "load": 51,
+      "currentTaskId": "task_wm667f33hu"
     },
     {
       "id": "emp_mason",
@@ -225,6 +225,66 @@
     }
   ],
   "tasks": [
+    {
+      "id": "task_tyadw533hu",
+      "parentTaskId": "task_scope",
+      "title": "明确 多人团队 MVP 范围 的目标和验收标准",
+      "projectId": "prj_workstation",
+      "ownerUserId": "usr_lin",
+      "status": "todo",
+      "priority": "P0",
+      "description": "基于父任务“定义多人团队 MVP 范围”梳理目标、边界、输入输出和验收标准。",
+      "assignedEmployeeIds": [
+        "emp_iris"
+      ],
+      "dueDate": "2026-06-27",
+      "createdAt": "2026-06-23T09:59:29.394Z"
+    },
+    {
+      "id": "task_b7b7bc33hu",
+      "parentTaskId": "task_scope",
+      "title": "设计 多人团队 MVP 范围 的执行流程",
+      "projectId": "prj_workstation",
+      "ownerUserId": "usr_lin",
+      "status": "todo",
+      "priority": "P2",
+      "description": "说明 AI 员工工作站 中该任务的执行步骤、依赖对象和风险点。",
+      "assignedEmployeeIds": [
+        "emp_iris"
+      ],
+      "dueDate": "2026-06-27",
+      "createdAt": "2026-06-23T09:59:29.394Z"
+    },
+    {
+      "id": "task_s1kfsa33hu",
+      "parentTaskId": "task_scope",
+      "title": "产出 多人团队 MVP 范围 的最小交付物",
+      "projectId": "prj_workstation",
+      "ownerUserId": "usr_lin",
+      "status": "todo",
+      "priority": "P2",
+      "description": "在不重构系统的前提下，产出可审阅的文档、代码或结果草案。",
+      "assignedEmployeeIds": [
+        "emp_iris"
+      ],
+      "dueDate": "2026-06-27",
+      "createdAt": "2026-06-23T09:59:29.394Z"
+    },
+    {
+      "id": "task_wm667f33hu",
+      "parentTaskId": "task_scope",
+      "title": "审查 多人团队 MVP 范围 的结果并沉淀改进项",
+      "projectId": "prj_workstation",
+      "ownerUserId": "usr_lin",
+      "status": "todo",
+      "priority": "P2",
+      "description": "检查交付物质量、遗漏风险和下一步优化建议。",
+      "assignedEmployeeIds": [
+        "emp_iris"
+      ],
+      "dueDate": "2026-06-27",
+      "createdAt": "2026-06-23T09:59:29.394Z"
+    },
     {
       "id": "task_scope",
       "title": "定义多人团队 MVP 范围",
@@ -300,6 +360,15 @@
   ],
   "artifacts": [
     {
+      "id": "art_jsgbci33hu",
+      "taskId": "task_scope",
+      "type": "plan",
+      "title": "任务拆解计划：定义多人团队 MVP 范围",
+      "createdBy": "emp_iris",
+      "updatedAt": "2026-06-23T09:59:29.394Z",
+      "summary": "1. 明确 多人团队 MVP 范围 的目标和验收标准\n2. 设计 多人团队 MVP 范围 的执行流程\n3. 产出 多人团队 MVP 范围 的最小交付物\n4. 审查 多人团队 MVP 范围 的结果并沉淀改进项"
+    },
+    {
       "id": "art_2l9wkqo5bt",
       "taskId": "task_runtime",
       "type": "discussion",
@@ -346,6 +415,24 @@
     }
   ],
   "auditLogs": [
+    {
+      "id": "log_8p89q733hv",
+      "createdAt": "2026-06-23T09:59:29.395Z",
+      "actorType": "agent",
+      "actorId": "emp_iris",
+      "event": "created_artifact",
+      "targetId": "art_jsgbci33hu",
+      "detail": "创建交付物：任务拆解计划：定义多人团队 MVP 范围"
+    },
+    {
+      "id": "log_x5vt8f33hv",
+      "createdAt": "2026-06-23T09:59:29.395Z",
+      "actorType": "agent",
+      "actorId": "emp_iris",
+      "event": "broke_down_task",
+      "targetId": "task_scope",
+      "detail": "拆解任务：定义多人团队 MVP 范围"
+    },
     {
       "id": "log_1sws7fgg5t",
       "createdAt": "2026-06-23T09:41:52.721Z",

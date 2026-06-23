@@ -119,6 +119,15 @@ function taskActionButtons(task) {
 
 
 
+
+function subtasksForTask(taskId) {
+  return state.data.tasks.filter((task) => task.parentTaskId === taskId);
+}
+
+function parentTaskForTask(task) {
+  return task.parentTaskId ? byId(state.data.tasks, task.parentTaskId) : null;
+}
+
 function availableTaskEmployees(task) {
   const assigned = new Set(task.assignedEmployeeIds);
   return state.data.employees.filter((employee) => !assigned.has(employee.id));
@@ -175,6 +184,8 @@ function renderDrawer() {
   const employees = task.assignedEmployeeIds.map((employeeId) => byId(state.data.employees, employeeId)).filter(Boolean);
   const availableEmployees = availableTaskEmployees(task);
   const project = projectForTask(task);
+  const subtasks = subtasksForTask(task.id);
+  const parentTask = parentTaskForTask(task);
 
   $("#drawer-title").textContent = task.title;
   $("#drawer-body").innerHTML = `
@@ -190,6 +201,16 @@ function renderDrawer() {
       </div>
       ${drawerActionButtons(task)}
     </section>
+    <section class="detail-section">
+      <h3>任务拆解</h3>
+      ${parentTask ? `<div class="timeline-row"><strong>父任务</strong><span>${parentTask.title}</span></div>` : ""}
+      ${subtasks.map((subtask) => `<div class="timeline-row">
+        <strong>${subtask.title}</strong>
+        <span>${statusText(subtask.status)} · ${subtask.priority} · ${subtask.dueDate || "未设截止"}</span>
+        <span>${subtask.description || "暂无描述"}</span>
+      </div>`).join("") || `<div class="empty">暂无子任务</div>`}
+    </section>
+
     <section class="detail-section">
       <h3>项目上下文</h3>
       <div class="detail-grid">
@@ -272,6 +293,7 @@ function drawerActionButtons(task) {
   const actions = [];
   if (task.status !== "done") {
     actions.push(`<button class="primary-button" data-agent-run="${task.id}">运行 Agent</button>`);
+    actions.push(`<button class="secondary-button" data-breakdown-task="${task.id}">拆解任务</button>`);
   }
   actions.push(taskActionButtons(task).replace('<div class="task-actions">', '').replace('</div>', ''));
   return `<div class="task-actions">${actions.join("")}</div>`;
@@ -530,6 +552,16 @@ async function load() {
 
 
 
+
+async function breakdownTask(taskId) {
+  await api(`/api/tasks/${taskId}/breakdown`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  await load();
+  if (state.selectedTaskId) renderDrawer();
+}
+
 async function sendChatMessage(taskId, content) {
   await api(`/api/tasks/${taskId}/chat/messages`, {
     method: "POST",
@@ -706,6 +738,7 @@ function bindEvents() {
       return;
     }
 
+    const breakdownTaskId = target.dataset.breakdownTask;
     const agentDiscussTask = target.dataset.agentDiscuss;
     const agentRunTask = target.dataset.agentRun;
     const runTask = target.dataset.runTask;
@@ -714,6 +747,7 @@ function bindEvents() {
     const approveId = target.dataset.approve;
     const rejectId = target.dataset.reject;
 
+    if (breakdownTaskId) await breakdownTask(breakdownTaskId);
     if (agentDiscussTask) await runAgentDiscussion(agentDiscussTask);
     if (agentRunTask) await runAgent(agentRunTask);
     if (runTask) await updateTaskStatus(runTask, "running");
