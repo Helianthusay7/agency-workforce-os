@@ -3,6 +3,7 @@ const state = {
   selectedProjectId: "all",
   selectedStatus: "all",
   taskSearch: "",
+  currentView: "dashboard",
   selectedTaskId: null
 };
 
@@ -27,6 +28,50 @@ function fmtDate(value) {
 
 
 
+
+
+function viewConfig(view) {
+  const configs = {
+    dashboard: {
+      title: "Overview",
+      showMetrics: true,
+      panels: ["project-panel", "task-panel"]
+    },
+    tasks: {
+      title: "Work queue",
+      showMetrics: false,
+      panels: ["task-panel"]
+    },
+    employees: {
+      title: "Agents",
+      showMetrics: false,
+      panels: ["employee-panel", "member-panel", "template-panel"]
+    },
+    approvals: {
+      title: "Approvals",
+      showMetrics: false,
+      panels: ["approval-panel", "artifact-panel", "log-panel"]
+    }
+  };
+  return configs[view] || configs.dashboard;
+}
+
+function renderView() {
+  const config = viewConfig(state.currentView);
+  const contentGrid = document.querySelector(".content-grid");
+  contentGrid.className = `content-grid view-${state.currentView}`;
+
+  document.querySelector(".topbar h1").textContent = config.title;
+  document.querySelector(".metric-grid").hidden = !config.showMetrics;
+
+  document.querySelectorAll(".content-grid > .panel").forEach((panel) => {
+    panel.hidden = !config.panels.some((className) => panel.classList.contains(className));
+  });
+
+  document.querySelectorAll(".nav-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.view === state.currentView);
+  });
+}
 
 function taskMatchesSearch(task) {
   const query = state.taskSearch.trim().toLowerCase();
@@ -554,6 +599,7 @@ function render() {
   renderApprovals();
   renderArtifacts();
   renderLogs();
+  renderView();
 }
 
 async function load() {
@@ -637,6 +683,13 @@ async function requestApproval(taskId) {
 
 function bindEvents() {
   $("#refresh-btn").addEventListener("click", load);
+
+  document.querySelectorAll(".nav-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      state.currentView = item.dataset.view || "dashboard";
+      renderView();
+    });
+  });
 
   document.querySelectorAll("dialog").forEach((dialog) => {
     dialog.addEventListener("close", () => dialog.querySelector("form")?.reset());
