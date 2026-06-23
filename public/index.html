@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agency Team Workstation</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">AW</div>
+          <div>
+            <strong id="org-name">Agency</strong>
+            <span id="org-plan">Team</span>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="主导航">
+          <button class="nav-item active" data-view="dashboard">
+            <span>⌂</span>
+            <span>工作台</span>
+          </button>
+          <button class="nav-item" data-view="employees">
+            <span>◎</span>
+            <span>AI 员工</span>
+          </button>
+          <button class="nav-item" data-view="tasks">
+            <span>□</span>
+            <span>任务</span>
+          </button>
+          <button class="nav-item" data-view="approvals">
+            <span>✓</span>
+            <span>审批</span>
+          </button>
+        </nav>
+
+        <section class="side-section">
+          <h2>团队</h2>
+          <div id="team-list" class="team-list"></div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">多人团队 AI 员工工作站</p>
+            <h1>团队执行控制台</h1>
+          </div>
+          <div class="topbar-actions">
+            <button id="refresh-btn" class="icon-button" title="刷新">↻</button>
+            <button id="open-task-modal" class="primary-button">新建任务</button>
+          </div>
+        </header>
+
+        <section class="metric-grid" aria-label="关键指标">
+          <article class="metric">
+            <span>活跃任务</span>
+            <strong id="metric-active-tasks">0</strong>
+          </article>
+          <article class="metric">
+            <span>待审批</span>
+            <strong id="metric-approvals">0</strong>
+          </article>
+          <article class="metric">
+            <span>可用 AI 员工</span>
+            <strong id="metric-employees">0</strong>
+          </article>
+          <article class="metric">
+            <span>需关注项目</span>
+            <strong id="metric-risk">0</strong>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <section class="panel project-panel">
+            <div class="panel-header">
+              <div>
+                <h2>项目概览</h2>
+                <p>项目状态、团队归属和知识源</p>
+              </div>
+            </div>
+            <div id="project-list" class="project-list"></div>
+          </section>
+
+          <section class="panel task-panel">
+            <div class="panel-header">
+              <div>
+                <h2>任务流</h2>
+                <p>按项目、状态和优先级推进</p>
+              </div>
+              <div class="filter-group">
+                <select id="project-filter" aria-label="项目筛选"></select>
+                <select id="status-filter" aria-label="状态筛选"></select>
+              </div>
+            </div>
+            <div id="task-list" class="task-list"></div>
+          </section>
+
+          <section class="panel employee-panel">
+            <div class="panel-header">
+              <div>
+                <h2>AI 员工池</h2>
+                <p>岗位、权限、负载和归属团队</p>
+              </div>
+              <button id="open-employee-modal" class="secondary-button">添加员工</button>
+            </div>
+            <div id="employee-list" class="employee-list"></div>
+          </section>
+          <section class="panel member-panel">
+            <div class="panel-header">
+              <div>
+                <h2>团队成员</h2>
+                <p>真人成员、角色和团队归属</p>
+              </div>
+            </div>
+            <div id="member-list" class="member-list"></div>
+          </section>
+
+
+          <section class="panel approval-panel">
+            <div class="panel-header">
+              <div>
+                <h2>审批队列</h2>
+                <p>写操作和外部动作先进入这里</p>
+              </div>
+            </div>
+            <div id="approval-list" class="approval-list"></div>
+          </section>
+
+          <section class="panel artifact-panel">
+            <div class="panel-header">
+              <div>
+                <h2>交付物</h2>
+                <p>计划、架构、代码和报告</p>
+              </div>
+            </div>
+            <div id="artifact-list" class="artifact-list"></div>
+          </section>
+          <section class="panel template-panel">
+            <div class="panel-header">
+              <div>
+                <h2>岗位模板</h2>
+                <p>AI 员工的角色边界和交付方向</p>
+              </div>
+            </div>
+            <div id="template-list" class="template-list"></div>
+          </section>
+
+
+          <section class="panel log-panel">
+            <div class="panel-header">
+              <div>
+                <h2>审计日志</h2>
+                <p>用户、AI 员工和审批动作</p>
+              </div>
+            </div>
+            <div id="log-list" class="log-list"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="task-modal" class="modal">
+      <form id="task-form">
+        <div class="modal-header">
+          <h2>新建任务</h2>
+          <button class="icon-button" type="button" data-close-modal title="关闭">×</button>
+        </div>
+        <label>
+          标题
+          <input name="title" required maxlength="80" placeholder="例如：设计内测审批流程" />
+        </label>
+        <label>
+          项目
+          <select name="projectId" id="task-project-select"></select>
+        </label>
+        <label>
+          优先级
+          <select name="priority">
+            <option>P0</option>
+            <option>P1</option>
+            <option selected>P2</option>
+          </select>
+        </label>
+        <label>
+          指派 AI 员工
+          <select name="employeeId" id="task-employee-select"></select>
+        </label>
+        <label>
+          截止日期
+          <input name="dueDate" type="date" />
+        </label>
+        <label>
+          描述
+          <textarea name="description" rows="4" maxlength="320" placeholder="输入目标、上下文和验收标准"></textarea>
+        </label>
+        <div class="modal-actions">
+          <button class="secondary-button" type="button" data-close-modal>取消</button>
+          <button class="primary-button" type="submit">创建</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="employee-modal" class="modal">
+      <form id="employee-form">
+        <div class="modal-header">
+          <h2>添加 AI 员工</h2>
+          <button class="icon-button" type="button" data-close-modal title="关闭">×</button>
+        </div>
+        <label>
+          员工名
+          <input name="displayName" required maxlength="30" placeholder="例如：Ava" />
+        </label>
+        <label>
+          岗位模板
+          <select name="templateId" id="employee-template-select"></select>
+        </label>
+        <label>
+          团队
+          <select name="teamId" id="employee-team-select"></select>
+        </label>
+        <label>
+          权限
+          <select name="permission">
+            <option>Read Only</option>
+            <option selected>Suggest</option>
+            <option>Draft</option>
+            <option>Execute With Approval</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button class="secondary-button" type="button" data-close-modal>取消</button>
+          <button class="primary-button" type="submit">添加</button>
+        </div>
+      </form>
+    </dialog>
+    <aside id="task-drawer" class="drawer" aria-hidden="true">
+      <div class="drawer-backdrop" data-close-drawer></div>
+      <section class="drawer-panel" aria-label="任务详情">
+        <div class="drawer-header">
+          <div>
+            <p class="eyebrow">任务详情</p>
+            <h2 id="drawer-title">未选择任务</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-drawer title="关闭">×</button>
+        </div>
+        <div id="drawer-body" class="drawer-body"></div>
+      </section>
+    </aside>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
+
