@@ -634,6 +634,27 @@ label {
 
 .artifact-form { display: grid; gap: 8px; }
 
+.template-preview {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfbfc;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.template-preview strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.template-preview p {
+  margin-bottom: 0;
+}
+
 @media (max-width: 1180px) {
   .content-grid,
   .content-grid.view-dashboard,

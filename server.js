@@ -738,6 +738,11 @@ async function handleApi(req, res, url) {
       teamId: body.teamId || state.teams[0]?.id,
       model: body.model || "gpt-5",
       permission: body.permission || "Suggest",
+      source: template.source || "local",
+      division: template.division || "",
+      skills: Array.isArray(template.deliverables) ? template.deliverables : [],
+      tools: Array.isArray(template.defaultTools) ? template.defaultTools : [],
+      systemPromptSource: template.systemPrompt ? "template.systemPrompt" : "template.summary",
       status: "available",
       load: 0,
       currentTaskId: null

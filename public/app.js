@@ -3,6 +3,7 @@ const state = {
   selectedProjectId: "all",
   selectedStatus: "all",
   taskSearch: "",
+  employeeTemplateSearch: "",
   currentView: "dashboard",
   selectedTaskId: null
 };
@@ -148,6 +149,45 @@ function teamName(id) {
 
 function templateFor(employee) {
   return byId(state.data.agentTemplates, employee.templateId);
+}
+
+function filteredAgentTemplates() {
+  const query = state.employeeTemplateSearch.trim().toLowerCase();
+  const templates = [...state.data.agentTemplates].sort((a, b) => {
+    if (a.source === b.source) return a.name.localeCompare(b.name);
+    return a.source === "agency-agents" ? -1 : 1;
+  });
+  if (!query) return templates;
+  return templates.filter((template) => {
+    return [template.name, template.division, template.summary, template.source]
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  });
+}
+
+function renderEmployeeTemplateOptions() {
+  const select = $("#employee-template-select");
+  const templates = filteredAgentTemplates();
+  select.innerHTML = templates
+    .map((template) => `<option value="${template.id}">${template.name} · ${template.division}${template.source === "agency-agents" ? " · agency-agents" : ""}</option>`)
+    .join("") || `<option value="">没有匹配的岗位模板</option>`;
+  renderEmployeeTemplatePreview();
+}
+
+function renderEmployeeTemplatePreview() {
+  const preview = $("#employee-template-preview");
+  const template = byId(state.data.agentTemplates, $("#employee-template-select").value);
+  if (!template) {
+    preview.innerHTML = "选择一个岗位模板后，这里会显示专业说明。";
+    return;
+  }
+  preview.innerHTML = `
+    <strong>${template.name}</strong>
+    <span>${template.division || "未分组"} · ${template.source === "agency-agents" ? "来自 agency-agents" : "内置模板"}</span>
+    <p>${template.summary || "暂无说明"}</p>
+    <small>预期产出：${(template.deliverables || []).slice(0, 5).join(" / ") || "未设置"}</small>
+  `;
 }
 
 const taskTemplates = {
@@ -595,9 +635,7 @@ function renderFilters() {
     .map((employee) => `<option value="${employee.id}">${employee.displayName} · ${employee.title}</option>`)
     .join("");
 
-  $("#employee-template-select").innerHTML = state.data.agentTemplates
-    .map((template) => `<option value="${template.id}">${template.name} · ${template.division}</option>`)
-    .join("");
+  renderEmployeeTemplateOptions();
 
   $("#employee-team-select").innerHTML = state.data.teams
     .map((team) => `<option value="${team.id}">${team.name}</option>`)
@@ -844,6 +882,13 @@ function bindEvents() {
     state.selectedStatus = event.target.value;
     renderTasks();
   });
+
+  $("#employee-template-search").addEventListener("input", (event) => {
+    state.employeeTemplateSearch = event.target.value;
+    renderEmployeeTemplateOptions();
+  });
+
+  $("#employee-template-select").addEventListener("change", renderEmployeeTemplatePreview);
 
   $("#open-task-modal").addEventListener("click", () => $("#task-modal").showModal());
   $("#open-employee-modal").addEventListener("click", () => $("#employee-modal").showModal());
