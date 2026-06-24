@@ -298,6 +298,29 @@ h1 {
   padding: 12px 14px 14px;
 }
 
+.quick-demand-form {
+  display: grid;
+  gap: 8px;
+}
+
+.quick-demand-form textarea {
+  min-height: 82px;
+}
+
+.quick-demand-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quick-demand-actions span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .workflow-steps,
 .template-actions {
   display: flex;

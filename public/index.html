@@ -82,6 +82,13 @@
               </div>
             </div>
             <div class="onboarding-body">
+              <form id="quick-demand-form" class="quick-demand-form">
+                <textarea name="demand" required rows="3" maxlength="600" placeholder="直接写你的需求，例如：帮我设计一个多人 AI 员工协作系统，先产出 MVP 范围和执行计划。"></textarea>
+                <div class="quick-demand-actions">
+                  <span id="quick-demand-status" aria-live="polite"></span>
+                  <button class="primary-button" type="submit">交给 AI 员工执行</button>
+                </div>
+              </form>
               <div class="workflow-steps" aria-label="使用流程">
                 <span>1. 写需求</span>
                 <span>2. 选员工</span>

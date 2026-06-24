@@ -175,6 +175,88 @@ function employeeForTemplate(templateId) {
   return state.data.employees.find((employee) => employee.templateId === templateId) || state.data.employees[0];
 }
 
+function classifyDemand(demand) {
+  const text = demand.toLowerCase();
+  if (/架构|系统|runtime|接口|数据|后端|执行引擎|worker/.test(text)) {
+    return taskTemplates.architecture;
+  }
+  if (/前端|页面|ui|界面|交互|样式|布局|按钮/.test(text)) {
+    return taskTemplates.implementation;
+  }
+  if (/审查|测试|风险|质量|review|bug|回归/.test(text)) {
+    return {
+      title: "审查需求风险并给出改进建议",
+      description: "请审查这个需求的风险、缺口、测试重点和可执行改进建议。输出必须能直接进入下一步处理。",
+      templateId: "tpl_reviewer",
+      priority: "P1"
+    };
+  }
+  return taskTemplates.product;
+}
+
+function buildDemandTask(demand) {
+  const template = classifyDemand(demand);
+  const compact = demand.replace(/\s+/g, " ").trim();
+  const title = compact.length > 34 ? `${compact.slice(0, 34)}...` : compact;
+  return {
+    title: title || template.title,
+    description: [
+      `原始需求：${demand}`,
+      "",
+      `执行要求：${template.description}`,
+      "请生成可以沉淀为交付物的结果，并给出下一步行动。"
+    ].join("\n"),
+    priority: template.priority,
+    employee: employeeForTemplate(template.templateId)
+  };
+}
+
+async function submitQuickDemand(formElement) {
+  const status = $("#quick-demand-status");
+  const button = formElement.querySelector("button[type='submit']");
+  const form = new FormData(formElement);
+  const demand = String(form.get("demand") || "").trim();
+  if (!demand) return;
+
+  const taskSpec = buildDemandTask(demand);
+  if (!taskSpec.employee) {
+    status.textContent = "还没有可用 AI 员工，请先添加一个 AI 员工。";
+    return;
+  }
+
+  button.disabled = true;
+  status.textContent = "正在创建任务...";
+  try {
+    const task = await api("/api/tasks", {
+      method: "POST",
+      body: JSON.stringify({
+        title: taskSpec.title,
+        projectId: state.data.projects[0]?.id,
+        priority: taskSpec.priority,
+        description: taskSpec.description,
+        dueDate: "",
+        assignedEmployeeIds: [taskSpec.employee.id]
+      })
+    });
+
+    status.textContent = "正在让 AI 员工执行...";
+    await api(`/api/tasks/${task.id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ employeeId: taskSpec.employee.id })
+    });
+
+    formElement.reset();
+    state.currentView = "tasks";
+    await load();
+    openDrawer(task.id);
+    status.textContent = "已生成交付物，请查看右侧任务详情。";
+  } catch (error) {
+    status.textContent = error.message || "执行失败，请稍后重试。";
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function applyTaskTemplate(templateKey) {
   const template = taskTemplates[templateKey];
   if (!template) return;
@@ -765,6 +847,11 @@ function bindEvents() {
 
   $("#open-task-modal").addEventListener("click", () => $("#task-modal").showModal());
   $("#open-employee-modal").addEventListener("click", () => $("#employee-modal").showModal());
+
+  $("#quick-demand-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await submitQuickDemand(event.currentTarget);
+  });
 
   $("#task-form").addEventListener("submit", async (event) => {
     event.preventDefault();
