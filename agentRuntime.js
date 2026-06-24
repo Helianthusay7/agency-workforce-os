@@ -73,6 +73,7 @@ export function buildRuntimePrompt({ task, agent, template, project }) {
     `Agent role: ${template?.name || agent.title}`,
     `Agent division: ${template?.division || "Unknown"}`,
     `Agent summary: ${template?.summary || "No role summary"}`,
+    `Agent system prompt: ${template?.systemPrompt || template?.summary || "No system prompt"}`,
     `Expected deliverables: ${(template?.deliverables || []).join(", ") || "general result"}`,
     `Tools: ${(template?.defaultTools || []).join(", ") || "none declared"}`,
     "",

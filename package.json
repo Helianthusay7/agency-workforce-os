@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "import:agency-agents": "node tools/import-agency-agents.js"
   },
   "engines": {
     "node": ">=20"
