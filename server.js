@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureExecutionState, orchestrateTask } from "./orchestrator.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -232,7 +233,9 @@ const seedState = {
     { id: "log_1", actorType: "user", actorId: "usr_lin", event: "created_task", targetId: "task_scope", detail: "创建任务：定义多人团队 MVP 范围", createdAt: "2026-06-23T03:20:00.000Z" },
     { id: "log_2", actorType: "agent", actorId: "emp_iris", event: "created_artifact", targetId: "art_scope", detail: "生成 MVP 范围草案", createdAt: "2026-06-23T05:25:00.000Z" },
     { id: "log_3", actorType: "agent", actorId: "emp_mason", event: "requested_approval", targetId: "apr_runtime", detail: "请求审批 Runtime Worker 协议草案", createdAt: "2026-06-23T04:40:00.000Z" }
-  ]
+  ],
+  events: [],
+  executionTraces: []
 };
 
 async function ensureState() {
@@ -320,6 +323,7 @@ function ensureChatState(state) {
 
 function ensureRuntimeState(state) {
   if (!Array.isArray(state.executionTraces)) state.executionTraces = [];
+  if (!Array.isArray(state.events)) state.events = [];
 }
 
 function snapshotTask(task) {
@@ -413,15 +417,22 @@ function buildAgentPrompt(state, task, employee, template, project) {
 
 function runMockLlm(prompt, task, employee, template, project) {
   const deliverables = template?.deliverables?.length ? template.deliverables.join("、") : "执行结果";
-  return [
-    `${employee.displayName} 已根据任务上下文完成一次本地 Agent Runtime 执行。`,
-    `项目：${project?.name || "未知项目"}`,
-    `任务：${task.title}`,
-    `角色：${template?.name || employee.title}`,
-    `交付方向：${deliverables}`,
-    `结果摘要：已分析任务目标、当前系统约束和可交付范围，生成一份可进入下一轮人工审阅的执行结果。`,
-    `Prompt snapshot:\n${prompt}`
-  ].join("\n\n");
+  return JSON.stringify({
+    type: "plan",
+    summary: `${employee.displayName} 已完成“${task.title}”的结构化执行结果。`,
+    content: [
+      `项目：${project?.name || "未知项目"}`,
+      `任务：${task.title}`,
+      `角色：${template?.name || employee.title}`,
+      `交付方向：${deliverables}`,
+      "结果：已分析任务目标、当前系统约束和可交付范围，形成可审阅的执行产物。",
+      `Prompt snapshot:\n${prompt}`
+    ].join("\n\n"),
+    deliverables: template?.deliverables?.length ? template.deliverables : ["结构化执行结果"],
+    decisions: ["先产出最小可审阅交付物，再根据结果继续拆分或审批。"],
+    risks: ["当前为 mock LLM 输出，真实质量取决于后续配置的模型和角色知识库。"],
+    nextActions: ["人工审阅交付物", "必要时拆分后续任务", "需要写操作时进入审批流程"]
+  });
 }
 
 function extractOpenAiText(payload) {
@@ -637,6 +648,7 @@ async function handleApi(req, res, url) {
   if (req.method === "GET" && pathname === "/api/state") {
     ensureChatState(state);
     ensureRuntimeState(state);
+    ensureExecutionState(state);
     sendJson(res, 200, { ...state, dashboard: deriveDashboard(state) });
     return;
   }
@@ -957,94 +969,45 @@ async function handleApi(req, res, url) {
   if (req.method === "POST" && taskRunMatch) {
     const body = await readBody(req);
     ensureRuntimeState(state);
-
-    const task = state.tasks.find((item) => item.id === taskRunMatch[1]);
-    if (!task) return notFound(res);
-
-    const employee = state.employees.find((item) => {
-      if (body.employeeId) return item.id === body.employeeId && task.assignedEmployeeIds.includes(item.id);
-      return task.assignedEmployeeIds.includes(item.id);
-    });
-    if (!employee) {
-      sendJson(res, 400, { error: "Task has no assigned AI employee" });
-      return;
-    }
-
-    const startedAt = now();
-    const template = state.agentTemplates.find((item) => item.id === employee.templateId);
-    const project = state.projects.find((item) => item.id === task.projectId);
-    const taskSnapshot = snapshotTask(task);
-    const agentSnapshot = snapshotAgent(employee, template);
-    let prompt = "";
-    let llmResult = null;
-
+    ensureExecutionState(state);
     try {
-      prompt = buildAgentPrompt(state, task, employee, template, project);
-      llmResult = await runLlm(prompt, task, employee, template, project);
-      const completedAt = now();
-      const artifact = {
-        id: id("art"),
-        taskId: task.id,
-        type: "result",
-        title: `Agent Runtime 输出：${task.title}`,
-        createdBy: employee.id,
-        updatedAt: completedAt,
-        summary: llmResult.output
-      };
-      const executionTrace = buildExecutionTrace({
-        taskSnapshot,
-        agentSnapshot,
-        prompt,
-        llmResult,
-        artifact,
-        startedAt,
-        completedAt
+      const result = await orchestrateTask(state, taskRunMatch[1], {
+        requestedAgentId: body.employeeId,
+        createId: id,
+        now,
+        callLlm: runLlm
       });
-      artifact.executionTraceId = executionTrace.id;
-
-      task.status = "running";
-      employee.status = "busy";
-      employee.currentTaskId = task.id;
-      employee.load = Math.min(95, Number(employee.load || 0) + 10);
-      state.artifacts.unshift(artifact);
-      state.executionTraces.unshift(executionTrace);
       addLog(state, {
         actorType: "agent",
-        actorId: employee.id,
+        actorId: result.agent.id,
         event: "ran_agent_runtime",
-        targetId: task.id,
-        detail: `${employee.displayName} 执行任务并生成交付物：${artifact.title}；trace=${executionTrace.id}`
+        targetId: result.task.id,
+        detail: `${result.agent.displayName} 执行任务并生成交付物：${result.artifact.title}；trace=${result.executionTrace.id}`
       });
       addLog(state, {
         actorType: "agent",
-        actorId: employee.id,
+        actorId: result.agent.id,
         event: "created_artifact",
-        targetId: artifact.id,
-        detail: `创建交付物：${artifact.title}`
+        targetId: result.artifact.id,
+        detail: `创建交付物：${result.artifact.title}`
       });
       await saveState(state);
-      sendJson(res, 201, { task, employee, artifact, executionTrace });
+      sendJson(res, 201, result);
     } catch (error) {
-      const completedAt = now();
-      const executionTrace = buildFailedExecutionTrace({
-        taskSnapshot,
-        agentSnapshot,
-        prompt,
-        llmResult,
-        error,
-        startedAt,
-        completedAt
-      });
-      state.executionTraces.unshift(executionTrace);
+      if (error.status === 404) return notFound(res);
+      if (error.status === 400) {
+        sendJson(res, 400, { error: error.message });
+        return;
+      }
       addLog(state, {
         actorType: "agent",
-        actorId: employee.id,
+        actorId: error.executionTrace?.agentId || body.employeeId || null,
         event: "failed_agent_runtime",
-        targetId: task.id,
-        detail: `${employee.displayName} 执行失败：${executionTrace.error.message}；trace=${executionTrace.id}`
+        targetId: taskRunMatch[1],
+        detail: `Agent Runtime 执行失败：${error.message || "Unknown error"}；trace=${error.executionTrace?.id || "none"}`
       });
       await saveState(state);
-      sendJson(res, 500, { error: executionTrace.error.message, executionTrace });
+      sendJson(res, 500, { error: error.message || "Agent Runtime execution failed", executionTrace: error.executionTrace });
     }
     return;
   }
