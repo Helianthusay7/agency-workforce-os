@@ -62,7 +62,23 @@ function selectAgent(state, task, requestedAgentId) {
 }
 
 function normalizePermission(permission) {
-  return String(permission || "").trim().toLowerCase();
+  const value = String(permission || "").trim().toLowerCase();
+  const aliases = {
+    "只读": "read only",
+    "建议": "suggest",
+    "草稿": "draft",
+    "审批后执行": "execute with approval",
+    "需审批执行": "execute with approval",
+    "read_only": "read only",
+    readonly: "read only",
+    draft: "draft",
+    suggest: "suggest",
+    suggestion: "suggest",
+    "execute_with_approval": "execute with approval",
+    "approval required": "execute with approval",
+    execute: "execute"
+  };
+  return aliases[value] || value;
 }
 
 function hasApprovedExecution(state, task, agent) {
@@ -84,7 +100,13 @@ function executionPolicy(agent) {
   if (permission === "suggest") {
     return { canRun: true, requiresApproval: false, allowedArtifactTypes: ["doc", "plan", "analysis"] };
   }
-  return { canRun: true, requiresApproval: false, allowedArtifactTypes: ["code", "doc", "plan", "analysis"] };
+  if (permission === "draft") {
+    return { canRun: true, requiresApproval: false, allowedArtifactTypes: ["doc", "plan", "analysis"] };
+  }
+  if (permission === "execute") {
+    return { canRun: true, requiresApproval: false, allowedArtifactTypes: ["code", "doc", "plan", "analysis"] };
+  }
+  return { canRun: true, requiresApproval: false, allowedArtifactTypes: ["doc", "plan", "analysis"] };
 }
 
 function assertAgentCanExecute(state, task, agent) {

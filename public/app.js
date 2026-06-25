@@ -44,14 +44,10 @@ function sanitizeHtml(markup) {
   return innerHtmlDescriptor.get.call(template);
 }
 
-Object.defineProperty(Element.prototype, "innerHTML", {
-  get() {
-    return innerHtmlDescriptor.get.call(this);
-  },
-  set(value) {
-    innerHtmlDescriptor.set.call(this, sanitizeHtml(value));
-  }
-});
+function setHtml(element, markup) {
+  if (!element) return;
+  innerHtmlDescriptor.set.call(element, sanitizeHtml(markup));
+}
 
 function byId(items, id) {
   return items.find((item) => item.id === id);
@@ -124,6 +120,7 @@ function statusFilterOptions() {
     ["all", "全部状态"],
     ["todo", "待处理"],
     ["running", "执行中"],
+    ["review", "待审阅"],
     ["waiting_approval", "待审批"],
     ["done", "已完成"]
   ];
@@ -156,6 +153,7 @@ function statusText(status) {
   const labels = {
     todo: "待处理",
     running: "执行中",
+    review: "待审阅",
     waiting_approval: "待审批",
     done: "已完成",
     failed: "失败",
@@ -204,9 +202,9 @@ function filteredAgentTemplates() {
 function renderEmployeeTemplateOptions() {
   const select = $("#employee-template-select");
   const templates = filteredAgentTemplates();
-  select.innerHTML = templates
+  setHtml(select, templates
     .map((template) => `<option value="${template.id}">${template.name} · ${template.division}${template.source === "agency-agents" ? " · agency-agents" : ""}</option>`)
-    .join("") || `<option value="">没有匹配的岗位模板</option>`;
+    .join("") || `<option value="">没有匹配的岗位模板</option>`);
   renderEmployeeTemplatePreview();
 }
 
@@ -214,15 +212,15 @@ function renderEmployeeTemplatePreview() {
   const preview = $("#employee-template-preview");
   const template = byId(state.data.agentTemplates, $("#employee-template-select").value);
   if (!template) {
-    preview.innerHTML = "选择一个岗位模板后，这里会显示专业说明。";
+    preview.textContent = "选择一个岗位模板后，这里会显示专业说明。";
     return;
   }
-  preview.innerHTML = `
+  setHtml(preview, `
     <strong>${template.name}</strong>
     <span>${template.division || "未分组"} · ${template.source === "agency-agents" ? "来自 agency-agents" : "内置模板"}</span>
     <p>${template.summary || "暂无说明"}</p>
     <small>预期产出：${(template.deliverables || []).slice(0, 5).join(" / ") || "未设置"}</small>
-  `;
+  `);
 }
 
 const taskTemplates = {
@@ -463,7 +461,7 @@ function renderDrawer() {
   const parentTask = parentTaskForTask(task);
 
   $("#drawer-title").textContent = task.title;
-  $("#drawer-body").innerHTML = `
+  setHtml($("#drawer-body"), `
     <section class="detail-section">
       <div class="guide-box">${taskGuidance(task, artifacts)}</div>
       <p>${task.description || "暂无描述"}</p>
@@ -561,7 +559,7 @@ function renderDrawer() {
         <span>${log.actorType === "agent" ? employeeName(log.actorId) : userName(log.actorId)} · ${fmtDate(log.createdAt)}</span>
       </div>`).join("") || `<div class="empty">还没有审计事件</div>`}
     </section>
-  `;
+  `);
 }
 
 
@@ -579,7 +577,7 @@ function drawerActionButtons(task) {
 function renderProjects() {
   const target = $("#project-list");
   if (!target) return;
-  target.innerHTML = state.data.projects
+  setHtml(target, state.data.projects
     .map((project) => {
       const taskCount = state.data.tasks.filter((task) => task.projectId === project.id).length;
       const team = byId(state.data.teams, project.teamId);
@@ -601,13 +599,13 @@ function renderProjects() {
         </article>
       `;
     })
-    .join("");
+    .join(""));
 }
 
 function renderMembers() {
   const target = $("#member-list");
   if (!target) return;
-  target.innerHTML = state.data.users
+  setHtml(target, state.data.users
     .map((user) => `
       <article class="member-card">
         <div>
@@ -618,13 +616,13 @@ function renderMembers() {
         <small>${teamName(user.teamId)}</small>
       </article>
     `)
-    .join("");
+    .join(""));
 }
 
 function renderTemplates() {
   const target = $("#template-list");
   if (!target) return;
-  target.innerHTML = state.data.agentTemplates
+  setHtml(target, state.data.agentTemplates
     .map((template) => `
       <article class="template-card">
         <strong>${template.name}</strong>
@@ -632,7 +630,7 @@ function renderTemplates() {
         <small>${template.division} · ${(template.deliverables || []).join(", ")}</small>
       </article>
     `)
-    .join("");
+    .join(""));
 }
 
 function renderChrome() {
@@ -644,7 +642,7 @@ function renderChrome() {
   $("#metric-employees").textContent = state.data.dashboard.availableEmployees;
   $("#metric-risk").textContent = state.data.dashboard.projectsAtRisk;
 
-  $("#team-list").innerHTML = state.data.teams
+  setHtml($("#team-list"), state.data.teams
     .map((team) => {
       const count = state.data.employees.filter((employee) => employee.teamId === team.id).length;
       return `
@@ -655,7 +653,7 @@ function renderChrome() {
         </div>
       `;
     })
-    .join("");
+    .join(""));
 }
 
 function renderFilters() {
@@ -663,27 +661,27 @@ function renderFilters() {
     `<option value="all">全部项目</option>`,
     ...state.data.projects.map((project) => `<option value="${project.id}">${project.name}</option>`)
   ].join("");
-  $("#project-filter").innerHTML = options;
+  setHtml($("#project-filter"), options);
   $("#project-filter").value = state.selectedProjectId;
 
-  $("#status-filter").innerHTML = statusFilterOptions()
+  setHtml($("#status-filter"), statusFilterOptions()
     .map(([value, label]) => `<option value="${value}">${label}</option>`)
-    .join("");
+    .join(""));
   $("#status-filter").value = state.selectedStatus;
 
-  $("#task-project-select").innerHTML = state.data.projects
+  setHtml($("#task-project-select"), state.data.projects
     .map((project) => `<option value="${project.id}">${project.name}</option>`)
-    .join("");
+    .join(""));
 
-  $("#task-employee-select").innerHTML = state.data.employees
+  setHtml($("#task-employee-select"), state.data.employees
     .map((employee) => `<option value="${employee.id}">${employee.displayName} · ${employee.title}</option>`)
-    .join("");
+    .join(""));
 
   renderEmployeeTemplateOptions();
 
-  $("#employee-team-select").innerHTML = state.data.teams
+  setHtml($("#employee-team-select"), state.data.teams
     .map((team) => `<option value="${team.id}">${team.name}</option>`)
-    .join("");
+    .join(""));
 }
 
 function renderTasks() {
@@ -694,7 +692,7 @@ function renderTasks() {
     return projectMatches && statusMatches && searchMatches;
   });
 
-  $("#task-list").innerHTML =
+  setHtml($("#task-list"),
     tasks
       .map((task) => {
         const employees = task.assignedEmployeeIds.map(employeeName).join(", ") || "未分配";
@@ -717,11 +715,11 @@ function renderTasks() {
           </article>
         `;
       })
-      .join("") || `<div class="empty">没有符合条件的任务</div>`;
+      .join("") || `<div class="empty">没有符合条件的任务</div>`);
 }
 
 function renderEmployees() {
-  $("#employee-list").innerHTML =
+  setHtml($("#employee-list"),
     state.data.employees
       .map((employee) => {
         const template = templateFor(employee);
@@ -745,11 +743,11 @@ function renderEmployees() {
           </article>
         `;
       })
-      .join("");
+      .join(""));
 }
 
 function renderApprovals() {
-  $("#approval-list").innerHTML =
+  setHtml($("#approval-list"),
     state.data.approvals
       .map((approval) => `
         <article class="approval-card">
@@ -776,11 +774,11 @@ function renderApprovals() {
           }
         </article>
       `)
-      .join("") || `<div class="empty">没有待处理审批</div>`;
+      .join("") || `<div class="empty">没有待处理审批</div>`);
 }
 
 function renderArtifacts() {
-  $("#artifact-list").innerHTML =
+  setHtml($("#artifact-list"),
     state.data.artifacts
       .map((artifact) => `
         <article class="artifact-card">
@@ -789,11 +787,11 @@ function renderArtifacts() {
           <small>${artifact.type} · ${employeeName(artifact.createdBy)} · ${fmtDate(artifact.updatedAt)}</small>
         </article>
       `)
-      .join("") || `<div class="empty">还没有交付物</div>`;
+      .join("") || `<div class="empty">还没有交付物</div>`);
 }
 
 function renderLogs() {
-  $("#log-list").innerHTML =
+  setHtml($("#log-list"),
     state.data.auditLogs
       .slice(0, 8)
       .map((log) => `
@@ -802,7 +800,7 @@ function renderLogs() {
           <small>${log.actorType === "agent" ? employeeName(log.actorId) : userName(log.actorId)} · ${fmtDate(log.createdAt)}</small>
         </article>
       `)
-      .join("");
+      .join(""));
 }
 
 function render() {
@@ -1080,7 +1078,7 @@ function bindEvents() {
 
 bindEvents();
 load().catch((error) => {
-  document.body.innerHTML = `<main class="workspace"><div class="panel"><div class="empty">${error.message}</div></div></main>`;
+  setHtml(document.body, `<main class="workspace"><div class="panel"><div class="empty">${error.message}</div></div></main>`);
 });
 
 

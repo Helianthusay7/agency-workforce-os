@@ -808,6 +808,28 @@ function normalizeLlmConfig(input = {}, current = {}, modelFallback = "mock-loca
   };
 }
 
+function normalizePermissionValue(permission) {
+  const value = String(permission || "Suggest").trim().toLowerCase();
+  const aliases = {
+    "只读": "Read Only",
+    "建议": "Suggest",
+    "草稿": "Draft",
+    "审批后执行": "Execute With Approval",
+    "需审批执行": "Execute With Approval",
+    "read only": "Read Only",
+    read_only: "Read Only",
+    readonly: "Read Only",
+    suggest: "Suggest",
+    suggestion: "Suggest",
+    draft: "Draft",
+    "execute with approval": "Execute With Approval",
+    execute_with_approval: "Execute With Approval",
+    "approval required": "Execute With Approval",
+    execute: "Execute"
+  };
+  return aliases[value] || "Suggest";
+}
+
 async function handleApi(req, res, url) {
   const state = await loadState();
   const pathname = url.pathname;
@@ -906,7 +928,7 @@ async function handleApi(req, res, url) {
       teamId: body.teamId || state.teams[0]?.id,
       model: body.model || "gpt-5",
       llmConfig: normalizeLlmConfig(body.llmConfig, {}, body.model || "gpt-5"),
-      permission: body.permission || "Suggest",
+      permission: normalizePermissionValue(body.permission),
       source: template.source || "local",
       division: template.division || "",
       skills: Array.isArray(template.deliverables) ? template.deliverables : [],
