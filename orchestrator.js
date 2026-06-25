@@ -1,4 +1,14 @@
 import { runAgentRuntime } from "./agentRuntime.js";
+import {
+  appendExecutionEvent,
+  completeExecutionRun,
+  completeRunStep,
+  createExecutionRun,
+  ensureExecutionEngineState,
+  failExecutionRun,
+  failRunStep,
+  startRunStep
+} from "./executionEngine.js";
 
 function snapshotTask(task) {
   return {
@@ -28,19 +38,11 @@ function snapshotAgent(agent, template) {
 }
 
 export function ensureExecutionState(state) {
-  if (!Array.isArray(state.artifacts)) state.artifacts = [];
-  if (!Array.isArray(state.events)) state.events = [];
-  if (!Array.isArray(state.executionTraces)) state.executionTraces = [];
+  ensureExecutionEngineState(state);
 }
 
 function emitEvent(state, createId, now, event) {
-  const record = {
-    id: createId("evt"),
-    timestamp: now(),
-    ...event
-  };
-  state.events.unshift(record);
-  return record;
+  return appendExecutionEvent(state, createId, now, event);
 }
 
 function selectAgent(state, task, requestedAgentId) {
@@ -148,16 +150,11 @@ export async function orchestrateTask(state, taskId, options) {
   const project = state.projects.find((item) => item.id === task.projectId);
   const taskSnapshot = snapshotTask(task);
   const agentSnapshot = snapshotAgent(agent, template);
-  const orchestrationId = createId("run");
-  const startedAt = now();
+  const executionRun = createExecutionRun(state, createId, now, { taskSnapshot, agentSnapshot });
+  const orchestrationId = executionRun.id;
+  const startedAt = executionRun.startedAt;
 
-  emitEvent(state, createId, now, {
-    type: "execution_started",
-    orchestrationId,
-    taskId: task.id,
-    agentId: agent.id,
-    input: { task: taskSnapshot, agent: agentSnapshot }
-  });
+  startRunStep(state, executionRun, createId, now, "select_agent", { requestedAgentId: requestedAgentId || null });
   emitEvent(state, createId, now, {
     type: "agent_selected",
     orchestrationId,
@@ -165,9 +162,18 @@ export async function orchestrateTask(state, taskId, options) {
     agentId: agent.id,
     input: { requestedAgentId: requestedAgentId || null }
   });
+  completeRunStep(state, executionRun, createId, now, "select_agent", { selectedAgentId: agent.id });
 
   try {
+    startRunStep(state, executionRun, createId, now, "run_agent", { taskId: task.id, agentId: agent.id });
     const runtimeResult = await runAgentRuntime({ task, agent, template, project, callLlm, now });
+    completeRunStep(state, executionRun, createId, now, "run_agent", {
+      provider: runtimeResult.llmResult.provider,
+      model: runtimeResult.llmResult.model,
+      parseStatus: runtimeResult.parsedOutput.parseStatus
+    });
+
+    startRunStep(state, executionRun, createId, now, "create_artifact", { outputType: runtimeResult.parsedOutput.type });
     const artifact = buildArtifact(createId, task, agent, runtimeResult);
     const executionTrace = buildExecutionTrace(createId, taskSnapshot, agentSnapshot, artifact, runtimeResult);
     artifact.executionTraceId = executionTrace.id;
@@ -180,6 +186,15 @@ export async function orchestrateTask(state, taskId, options) {
 
     state.artifacts.unshift(artifact);
     state.executionTraces.unshift(executionTrace);
+    completeRunStep(state, executionRun, createId, now, "create_artifact", {
+      artifactId: artifact.id,
+      executionTraceId: executionTrace.id
+    });
+
+    startRunStep(state, executionRun, createId, now, "persist_events", {
+      artifactId: artifact.id,
+      executionTraceId: executionTrace.id
+    });
     emitEvent(state, createId, now, {
       type: "prompt_built",
       orchestrationId,
@@ -211,12 +226,23 @@ export async function orchestrateTask(state, taskId, options) {
       artifactId: artifact.id,
       executionTraceId: executionTrace.id
     });
+    completeRunStep(state, executionRun, createId, now, "persist_events", {
+      artifactId: artifact.id,
+      executionTraceId: executionTrace.id
+    });
+    completeExecutionRun(state, executionRun, createId, now, {
+      artifactId: artifact.id,
+      executionTraceId: executionTrace.id
+    });
 
-    return { task, employee: agent, agent, artifact, executionTrace, orchestrationId };
+    return { task, employee: agent, agent, artifact, executionTrace, orchestrationId, executionRun };
   } catch (error) {
     const completedAt = now();
     const executionTrace = buildFailedExecutionTrace(createId, taskSnapshot, agentSnapshot, error, startedAt, completedAt);
     state.executionTraces.unshift(executionTrace);
+    if (executionRun.currentStep) {
+      failRunStep(state, executionRun, createId, now, executionRun.currentStep, error);
+    }
     emitEvent(state, createId, now, {
       type: "execution_failed",
       orchestrationId,
@@ -225,7 +251,9 @@ export async function orchestrateTask(state, taskId, options) {
       executionTraceId: executionTrace.id,
       error: executionTrace.error
     });
+    failExecutionRun(state, executionRun, createId, now, error, executionTrace.id);
     error.executionTrace = executionTrace;
+    error.executionRun = executionRun;
     throw error;
   }
 }

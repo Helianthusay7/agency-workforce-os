@@ -235,7 +235,9 @@ const seedState = {
     { id: "log_3", actorType: "agent", actorId: "emp_mason", event: "requested_approval", targetId: "apr_runtime", detail: "请求审批 Runtime Worker 协议草案", createdAt: "2026-06-23T04:40:00.000Z" }
   ],
   events: [],
-  executionTraces: []
+  executionTraces: [],
+  executionRuns: [],
+  executionEventCursor: 0
 };
 
 async function ensureState() {
@@ -324,6 +326,8 @@ function ensureChatState(state) {
 function ensureRuntimeState(state) {
   if (!Array.isArray(state.executionTraces)) state.executionTraces = [];
   if (!Array.isArray(state.events)) state.events = [];
+  if (!Array.isArray(state.executionRuns)) state.executionRuns = [];
+  if (!Number.isInteger(state.executionEventCursor)) state.executionEventCursor = 0;
 }
 
 function snapshotTask(task) {
