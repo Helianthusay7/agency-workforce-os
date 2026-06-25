@@ -129,6 +129,8 @@ export async function runAgentRuntime({ task, agent, template, project, callLlm,
     error.llmOutput = error.llmOutput || llmResult?.output || "";
     error.provider = error.provider || llmResult?.provider;
     error.model = error.model || llmResult?.model;
+    error.keyRef = error.keyRef || llmResult?.keyRef;
+    error.baseUrl = error.baseUrl || llmResult?.baseUrl;
     throw error;
   }
 }

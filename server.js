@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureExecutionState, orchestrateTask } from "./orchestrator.js";
+import { runAgentLlm } from "./providerAdapters.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -104,6 +105,14 @@ const seedState = {
       title: "AI 产品经理",
       teamId: "team_product",
       model: "gpt-5",
+      llmConfig: {
+        provider: "mock",
+        model: "gpt-5",
+        keyRef: "",
+        temperature: 0.2,
+        timeoutMs: 6000,
+        allowMockFallback: true
+      },
       permission: "Suggest",
       status: "available",
       load: 35,
@@ -116,6 +125,14 @@ const seedState = {
       title: "AI 架构师",
       teamId: "team_engineering",
       model: "gpt-5",
+      llmConfig: {
+        provider: "mock",
+        model: "gpt-5",
+        keyRef: "",
+        temperature: 0.2,
+        timeoutMs: 6000,
+        allowMockFallback: true
+      },
       permission: "Execute With Approval",
       status: "busy",
       load: 68,
@@ -128,6 +145,14 @@ const seedState = {
       title: "AI 前端工程师",
       teamId: "team_engineering",
       model: "gpt-5",
+      llmConfig: {
+        provider: "mock",
+        model: "gpt-5",
+        keyRef: "",
+        temperature: 0.2,
+        timeoutMs: 6000,
+        allowMockFallback: true
+      },
       permission: "Draft",
       status: "available",
       load: 22,
@@ -140,6 +165,14 @@ const seedState = {
       title: "AI 代码审查员",
       teamId: "team_engineering",
       model: "gpt-5",
+      llmConfig: {
+        provider: "mock",
+        model: "gpt-5",
+        keyRef: "",
+        temperature: 0.1,
+        timeoutMs: 6000,
+        allowMockFallback: true
+      },
       permission: "Read Only",
       status: "available",
       load: 18,
@@ -152,6 +185,14 @@ const seedState = {
       title: "AI 增长策划",
       teamId: "team_growth",
       model: "gpt-5-mini",
+      llmConfig: {
+        provider: "mock",
+        model: "gpt-5-mini",
+        keyRef: "",
+        temperature: 0.4,
+        timeoutMs: 6000,
+        allowMockFallback: true
+      },
       permission: "Suggest",
       status: "available",
       load: 41,
@@ -988,7 +1029,7 @@ async function handleApi(req, res, url) {
         requestedAgentId: body.employeeId,
         createId: id,
         now,
-        callLlm: runLlm
+        callLlm: runAgentLlm
       });
       addLog(state, {
         actorType: "agent",

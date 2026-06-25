@@ -26,6 +26,7 @@ function snapshotTask(task) {
 }
 
 function snapshotAgent(agent, template) {
+  const llmConfig = agent.llmConfig && typeof agent.llmConfig === "object" ? agent.llmConfig : {};
   return {
     id: agent.id,
     displayName: agent.displayName,
@@ -33,7 +34,13 @@ function snapshotAgent(agent, template) {
     templateId: agent.templateId,
     role: template?.name || agent.title,
     model: agent.model,
-    permission: agent.permission
+    permission: agent.permission,
+    llmConfig: {
+      provider: llmConfig.provider || null,
+      model: llmConfig.model || agent.model || null,
+      keyRef: llmConfig.keyRef || llmConfig.apiKeyEnv || null,
+      baseUrl: llmConfig.baseUrl || null
+    }
   };
 }
 
@@ -90,6 +97,8 @@ function buildExecutionTrace(createId, taskSnapshot, agentSnapshot, artifact, ru
     provider: runtimeResult.llmResult.provider,
     requestedProvider: runtimeResult.llmResult.requestedProvider || runtimeResult.llmResult.provider,
     model: runtimeResult.llmResult.model,
+    keyRef: runtimeResult.llmResult.keyRef || "",
+    baseUrl: runtimeResult.llmResult.baseUrl || "",
     fallback: Boolean(runtimeResult.llmResult.fallback),
     fallbackReason: runtimeResult.llmResult.fallbackReason || "",
     responseId: runtimeResult.llmResult.responseId || null,
@@ -116,6 +125,8 @@ function buildFailedExecutionTrace(createId, taskSnapshot, agentSnapshot, runtim
     provider: runtimeError.provider || "unknown",
     requestedProvider: runtimeError.provider || "unknown",
     model: runtimeError.model || agentSnapshot.model || "unknown",
+    keyRef: runtimeError.keyRef || agentSnapshot.llmConfig?.keyRef || "",
+    baseUrl: runtimeError.baseUrl || agentSnapshot.llmConfig?.baseUrl || "",
     fallback: false,
     fallbackReason: "",
     responseId: null,
@@ -146,6 +157,8 @@ function emitLlmCalled(state, createId, now, { task, agent, orchestrationId, run
       provider: runtimeResult?.llmResult?.provider || error?.provider || "unknown",
       requestedProvider: runtimeResult?.llmResult?.requestedProvider || error?.provider || "unknown",
       model: runtimeResult?.llmResult?.model || error?.model || agent.model || "unknown",
+      keyRef: runtimeResult?.llmResult?.keyRef || error?.keyRef || agent.llmConfig?.keyRef || "",
+      baseUrl: runtimeResult?.llmResult?.baseUrl || error?.baseUrl || agent.llmConfig?.baseUrl || "",
       fallback: Boolean(runtimeResult?.llmResult?.fallback),
       fallbackReason: runtimeResult?.llmResult?.fallbackReason || "",
       prompt: runtimeResult?.prompt || error?.prompt || "",
