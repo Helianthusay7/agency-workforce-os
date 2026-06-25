@@ -690,6 +690,22 @@ function deriveDashboard(state) {
   };
 }
 
+function normalizeLlmConfig(input = {}, current = {}, modelFallback = "mock-local") {
+  const source = input && typeof input === "object" ? input : {};
+  const existing = current && typeof current === "object" ? current : {};
+  const provider = String(source.provider || existing.provider || "mock").toLowerCase();
+  const allowedProviders = new Set(["mock", "openai", "openai-compatible"]);
+  return {
+    provider: allowedProviders.has(provider) ? provider : "mock",
+    model: String(source.model || existing.model || modelFallback || "mock-local"),
+    keyRef: String(source.keyRef || source.apiKeyEnv || existing.keyRef || existing.apiKeyEnv || ""),
+    baseUrl: String(source.baseUrl || existing.baseUrl || ""),
+    temperature: Number.isFinite(Number(source.temperature ?? existing.temperature)) ? Number(source.temperature ?? existing.temperature) : 0.2,
+    timeoutMs: Number.isFinite(Number(source.timeoutMs ?? existing.timeoutMs)) ? Number(source.timeoutMs ?? existing.timeoutMs) : 6000,
+    allowMockFallback: typeof source.allowMockFallback === "boolean" ? source.allowMockFallback : existing.allowMockFallback !== false
+  };
+}
+
 async function handleApi(req, res, url) {
   const state = await loadState();
   const pathname = url.pathname;
@@ -786,6 +802,7 @@ async function handleApi(req, res, url) {
       title: String(body.title || `AI ${template.name}`),
       teamId: body.teamId || state.teams[0]?.id,
       model: body.model || "gpt-5",
+      llmConfig: normalizeLlmConfig(body.llmConfig, {}, body.model || "gpt-5"),
       permission: body.permission || "Suggest",
       source: template.source || "local",
       division: template.division || "",
@@ -806,6 +823,25 @@ async function handleApi(req, res, url) {
     });
     await saveState(state);
     sendJson(res, 201, employee);
+    return;
+  }
+
+  const employeeLlmConfigMatch = pathname.match(/^\/api\/employees\/([^/]+)\/llm-config$/);
+  if (req.method === "PATCH" && employeeLlmConfigMatch) {
+    const body = await readBody(req);
+    const employee = state.employees.find((item) => item.id === employeeLlmConfigMatch[1]);
+    if (!employee) return notFound(res);
+    employee.llmConfig = normalizeLlmConfig(body.llmConfig || body, employee.llmConfig, employee.model);
+    employee.model = employee.llmConfig.model || employee.model;
+    addLog(state, {
+      actorType: "user",
+      actorId: body.actorId || state.users[0]?.id,
+      event: "updated_employee_llm_config",
+      targetId: employee.id,
+      detail: `Updated LLM config for ${employee.displayName}: provider=${employee.llmConfig.provider}, model=${employee.llmConfig.model}, keyRef=${employee.llmConfig.keyRef || "none"}`
+    });
+    await saveState(state);
+    sendJson(res, 200, employee);
     return;
   }
 
