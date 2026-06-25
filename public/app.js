@@ -226,6 +226,12 @@ function renderEmployeeTemplatePreview() {
 }
 
 const taskTemplates = {
+  douyin: {
+    title: "分析抖音视频数据并给出运营动作",
+    description: "请基于抖音创作者中心数据、视频指标、评论内容或增长目标，输出数据解读、趋势判断、回复草案、风险点和需要审批的自动化动作。不要声称已经抓取数据，除非任务提供了数据 artifact 或工具结果。",
+    templateId: "tpl_douyin_ops",
+    priority: "P1"
+  },
   product: {
     title: "分析产品需求并定义 MVP 范围",
     description: "请梳理这个需求的目标用户、核心场景、第一版范围、验收标准、风险点和下一步任务。输出必须能直接进入执行。",
@@ -252,6 +258,9 @@ function employeeForTemplate(templateId) {
 
 function classifyDemand(demand) {
   const text = demand.toLowerCase();
+  if (/抖音|douyin|creator\.douyin|视频数据|播放量|完播率|评论回复|自媒体|短视频/.test(text)) {
+    return taskTemplates.douyin;
+  }
   if (/架构|系统|runtime|接口|数据|后端|执行引擎|worker/.test(text)) {
     return taskTemplates.architecture;
   }

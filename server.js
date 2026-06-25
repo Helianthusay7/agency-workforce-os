@@ -16,6 +16,73 @@ const port = Number(process.env.PORT || 4173);
 const now = () => new Date().toISOString();
 const id = (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
 
+const douyinOpsTemplate = {
+  id: "tpl_douyin_ops",
+  source: "TzFilm-Douyin-Tool",
+  sourceRepo: "https://github.com/TradingAi666/TzFilm-Douyin-Tool",
+  sourcePath: "SKILL.md",
+  skill: "douyin-creator-scraping",
+  name: "Douyin Operations Analyst",
+  division: "Growth",
+  summary: "Analyze Douyin creator-center exports, track video metrics, forecast performance, draft comment replies, and require approval before automated platform actions.",
+  deliverables: ["Douyin performance report", "Video growth trend analysis", "Comment reply draft", "Automation risk note"],
+  defaultTools: [
+    "douyin_hourly.py",
+    "douyin_new_video_tracker.py",
+    "prediction_query.py",
+    "auto_reply.py",
+    "telegram-push",
+    "artifact-write"
+  ],
+  toolPolicies: {
+    readOnly: ["douyin_hourly.py", "douyin_new_video_tracker.py", "prediction_query.py"],
+    requiresApproval: ["auto_reply.py", "browser-automation", "telegram-push"],
+    platformRisk: "Conservative frequency is required. Automated replies and browser automation may trigger Douyin platform risk controls."
+  },
+  runtimeRequirements: {
+    os: "macOS-oriented upstream scripts; Windows requires an adapter or remote runner.",
+    browser: "Chrome logged into creator.douyin.com",
+    storage: "SQLite database produced by the upstream scraping scripts"
+  },
+  systemPrompt: [
+    "You are a Douyin Operations Analyst inside AI Workforce OS.",
+    "Use the TzFilm-Douyin-Tool skill as your operating playbook.",
+    "Your job is to analyze Douyin creator-center data, video metric snapshots, trend changes, prediction results, and comments.",
+    "You may produce analysis, plans, reply drafts, and risk notes.",
+    "Do not claim that data was scraped unless an artifact or tool result is provided.",
+    "Do not perform automated replies, browser automation, posting, publishing, or external notifications without explicit approval.",
+    "When a task asks for platform action, return an approval-ready plan with risk, target scope, frequency, and rollback instructions.",
+    "Always return structured JSON according to the Agent Runtime schema."
+  ].join("\n")
+};
+
+const douyinOpsEmployee = {
+  id: "emp_douyin_ops",
+  templateId: "tpl_douyin_ops",
+  displayName: "Tao",
+  title: "AI Douyin Operations Analyst",
+  teamId: "team_growth",
+  model: "gpt-5.4-mini",
+  llmConfig: {
+    provider: "mock",
+    model: "gpt-5.4-mini",
+    keyRef: "",
+    baseUrl: "",
+    temperature: 0.2,
+    timeoutMs: 30000,
+    allowMockFallback: true
+  },
+  permission: "Suggest",
+  source: "TzFilm-Douyin-Tool",
+  division: "Growth",
+  skills: douyinOpsTemplate.deliverables,
+  tools: douyinOpsTemplate.defaultTools,
+  systemPromptSource: "template.systemPrompt",
+  status: "available",
+  load: 0,
+  currentTaskId: null
+};
+
 const seedState = {
   organization: {
     id: "org_nova",
@@ -95,7 +162,8 @@ const seedState = {
       summary: "规划内测、转化路径、用户分层和发布内容。",
       deliverables: ["发布计划", "邮件草稿", "渠道实验"],
       defaultTools: ["knowledge", "artifact-write"]
-    }
+    },
+    douyinOpsTemplate
   ],
   employees: [
     {
@@ -197,7 +265,8 @@ const seedState = {
       status: "available",
       load: 41,
       currentTaskId: "task_beta"
-    }
+    },
+    douyinOpsEmployee
   ],
   tasks: [
     {
@@ -369,6 +438,39 @@ function ensureRuntimeState(state) {
   if (!Array.isArray(state.events)) state.events = [];
   if (!Array.isArray(state.executionRuns)) state.executionRuns = [];
   if (!Number.isInteger(state.executionEventCursor)) state.executionEventCursor = 0;
+}
+
+function ensureBusinessSkillState(state) {
+  if (!Array.isArray(state.agentTemplates)) state.agentTemplates = [];
+  if (!Array.isArray(state.employees)) state.employees = [];
+
+  const existingTemplate = state.agentTemplates.find((template) => template.id === douyinOpsTemplate.id);
+  if (existingTemplate) {
+    Object.assign(existingTemplate, douyinOpsTemplate);
+  } else {
+    state.agentTemplates.push({ ...douyinOpsTemplate });
+  }
+
+  const existingEmployee = state.employees.find((employee) => employee.id === douyinOpsEmployee.id);
+  if (!existingEmployee) {
+    state.employees.push({
+      ...douyinOpsEmployee,
+      llmConfig: { ...douyinOpsEmployee.llmConfig },
+      skills: [...douyinOpsEmployee.skills],
+      tools: [...douyinOpsEmployee.tools]
+    });
+  } else {
+    existingEmployee.templateId = douyinOpsTemplate.id;
+    existingEmployee.source = "TzFilm-Douyin-Tool";
+    existingEmployee.division = "Growth";
+    existingEmployee.skills = [...douyinOpsEmployee.skills];
+    existingEmployee.tools = [...douyinOpsEmployee.tools];
+    existingEmployee.systemPromptSource = "template.systemPrompt";
+    if (!existingEmployee.permission || existingEmployee.permission === "Execute With Approval") {
+      existingEmployee.permission = douyinOpsEmployee.permission;
+    }
+    existingEmployee.llmConfig = existingEmployee.llmConfig || { ...douyinOpsEmployee.llmConfig };
+  }
 }
 
 function snapshotTask(task) {
@@ -709,6 +811,7 @@ function normalizeLlmConfig(input = {}, current = {}, modelFallback = "mock-loca
 async function handleApi(req, res, url) {
   const state = await loadState();
   const pathname = url.pathname;
+  ensureBusinessSkillState(state);
 
   if (req.method === "GET" && pathname === "/api/state") {
     ensureChatState(state);
