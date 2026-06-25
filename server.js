@@ -1085,8 +1085,8 @@ async function handleApi(req, res, url) {
       sendJson(res, 201, result);
     } catch (error) {
       if (error.status === 404) return notFound(res);
-      if (error.status === 400) {
-        sendJson(res, 400, { error: error.message });
+      if (error.status === 400 || error.status === 403) {
+        sendJson(res, error.status, { error: error.message, executionTrace: error.executionTrace });
         return;
       }
       addLog(state, {

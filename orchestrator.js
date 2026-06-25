@@ -61,6 +61,55 @@ function selectAgent(state, task, requestedAgentId) {
     .find(Boolean);
 }
 
+function normalizePermission(permission) {
+  return String(permission || "").trim().toLowerCase();
+}
+
+function hasApprovedExecution(state, task, agent) {
+  return state.approvals.some((approval) => {
+    return approval.taskId === task.id
+      && approval.status === "approved"
+      && (!approval.requesterEmployeeId || approval.requesterEmployeeId === agent.id);
+  });
+}
+
+function executionPolicy(agent) {
+  const permission = normalizePermission(agent.permission);
+  if (permission === "read only") {
+    return { canRun: false, requiresApproval: false, allowedArtifactTypes: [] };
+  }
+  if (permission === "execute with approval") {
+    return { canRun: true, requiresApproval: true, allowedArtifactTypes: ["code", "doc", "plan", "analysis"] };
+  }
+  if (permission === "suggest") {
+    return { canRun: true, requiresApproval: false, allowedArtifactTypes: ["doc", "plan", "analysis"] };
+  }
+  return { canRun: true, requiresApproval: false, allowedArtifactTypes: ["code", "doc", "plan", "analysis"] };
+}
+
+function assertAgentCanExecute(state, task, agent) {
+  const policy = executionPolicy(agent);
+  if (!policy.canRun) {
+    const error = new Error(`${agent.displayName} is read-only and cannot execute tasks`);
+    error.status = 403;
+    throw error;
+  }
+  if (policy.requiresApproval && !hasApprovedExecution(state, task, agent)) {
+    const error = new Error(`${agent.displayName} requires approved execution before running this task`);
+    error.status = 403;
+    throw error;
+  }
+}
+
+function assertArtifactAllowed(agent, parsedOutput) {
+  const policy = executionPolicy(agent);
+  if (!policy.allowedArtifactTypes.includes(parsedOutput.type)) {
+    const error = new Error(`${agent.displayName} is not permitted to create ${parsedOutput.type} artifacts`);
+    error.status = 403;
+    throw error;
+  }
+}
+
 function buildArtifact(createId, task, agent, runtimeResult) {
   const artifactId = createId("art");
   return {
@@ -184,6 +233,7 @@ export async function orchestrateTask(state, taskId, options) {
     error.status = 400;
     throw error;
   }
+  assertAgentCanExecute(state, task, agent);
 
   const template = state.agentTemplates.find((item) => item.id === agent.templateId);
   const project = state.projects.find((item) => item.id === task.projectId);
@@ -192,6 +242,7 @@ export async function orchestrateTask(state, taskId, options) {
   const executionRun = createExecutionRun(state, createId, now, { taskSnapshot, agentSnapshot });
   const orchestrationId = executionRun.id;
   const startedAt = executionRun.startedAt;
+  let llmEventEmitted = false;
 
   emitEvent(state, createId, now, {
     type: EXECUTION_EVENT_TYPES.TASK_STARTED,
@@ -215,6 +266,8 @@ export async function orchestrateTask(state, taskId, options) {
     startRunStep(state, executionRun, createId, now, "run_agent", { taskId: task.id, agentId: agent.id });
     const runtimeResult = await runAgentRuntime({ task, agent, template, project, callLlm, now });
     emitLlmCalled(state, createId, now, { task, agent, orchestrationId, runtimeResult });
+    llmEventEmitted = true;
+    assertArtifactAllowed(agent, runtimeResult.parsedOutput);
     completeRunStep(state, executionRun, createId, now, "run_agent", {
       provider: runtimeResult.llmResult.provider,
       model: runtimeResult.llmResult.model,
@@ -275,7 +328,7 @@ export async function orchestrateTask(state, taskId, options) {
     const completedAt = now();
     const executionTrace = buildFailedExecutionTrace(createId, taskSnapshot, agentSnapshot, error, startedAt, completedAt);
     state.executionTraces.unshift(executionTrace);
-    if (executionRun.currentStep === "run_agent") {
+    if (executionRun.currentStep === "run_agent" && !llmEventEmitted) {
       emitLlmCalled(state, createId, now, { task, agent, orchestrationId, error });
     }
     if (executionRun.currentStep) {

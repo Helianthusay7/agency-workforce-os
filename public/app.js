@@ -18,6 +18,41 @@ const api = async (url, options = {}) => {
   return response.json();
 };
 
+const innerHtmlDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+
+function sanitizeHtml(markup) {
+  const template = document.createElement("template");
+  innerHtmlDescriptor.set.call(template, String(markup ?? ""));
+  template.content.querySelectorAll("script, iframe, object, embed, link, meta, base").forEach((node) => node.remove());
+  template.content.querySelectorAll("*").forEach((node) => {
+    for (const attribute of [...node.attributes]) {
+      const name = attribute.name.toLowerCase();
+      const value = String(attribute.value || "").trim().toLowerCase();
+      if (name.startsWith("on") || name === "srcdoc") {
+        node.removeAttribute(attribute.name);
+        continue;
+      }
+      if (["href", "src", "xlink:href", "formaction"].includes(name) && /^(javascript|data:text\/html):/.test(value)) {
+        node.removeAttribute(attribute.name);
+        continue;
+      }
+      if (name === "style" && /(expression|javascript:|url\s*\()/i.test(attribute.value)) {
+        node.removeAttribute(attribute.name);
+      }
+    }
+  });
+  return innerHtmlDescriptor.get.call(template);
+}
+
+Object.defineProperty(Element.prototype, "innerHTML", {
+  get() {
+    return innerHtmlDescriptor.get.call(this);
+  },
+  set(value) {
+    innerHtmlDescriptor.set.call(this, sanitizeHtml(value));
+  }
+});
+
 function byId(items, id) {
   return items.find((item) => item.id === id);
 }
