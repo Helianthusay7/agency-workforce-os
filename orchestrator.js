@@ -1,6 +1,5 @@
 import { runAgentRuntime } from "./agentRuntime.js";
 import {
-  appendExecutionEvent,
   completeExecutionRun,
   completeRunStep,
   createExecutionRun,
@@ -9,6 +8,7 @@ import {
   failRunStep,
   startRunStep
 } from "./executionEngine.js";
+import { EXECUTION_EVENT_TYPES, appendEvent } from "./eventStore.js";
 
 function snapshotTask(task) {
   return {
@@ -42,7 +42,7 @@ export function ensureExecutionState(state) {
 }
 
 function emitEvent(state, createId, now, event) {
-  return appendExecutionEvent(state, createId, now, event);
+  return appendEvent(state, createId, now, event);
 }
 
 function selectAgent(state, task, requestedAgentId) {
@@ -55,14 +55,20 @@ function selectAgent(state, task, requestedAgentId) {
 }
 
 function buildArtifact(createId, task, agent, runtimeResult) {
+  const artifactId = createId("art");
   return {
-    id: createId("art"),
+    id: artifactId,
     type: runtimeResult.parsedOutput.type,
-    title: `Agent 执行结果：${task.title}`,
+    title: `Agent execution result: ${task.title}`,
     content: runtimeResult.parsedOutput.content,
     summary: runtimeResult.parsedOutput.summary,
     taskId: task.id,
     agentId: agent.id,
+    meta: {
+      ...runtimeResult.parsedOutput.meta,
+      artifactId,
+      runtime: "agent-runtime-v2"
+    },
     createdBy: agent.id,
     timestamp: runtimeResult.completedAt,
     updatedAt: runtimeResult.completedAt,
@@ -129,6 +135,26 @@ function buildFailedExecutionTrace(createId, taskSnapshot, agentSnapshot, runtim
   };
 }
 
+function emitLlmCalled(state, createId, now, { task, agent, orchestrationId, runtimeResult, error }) {
+  emitEvent(state, createId, now, {
+    type: EXECUTION_EVENT_TYPES.LLM_CALLED,
+    orchestrationId,
+    taskId: task.id,
+    agentId: agent.id,
+    payload: {
+      status: error ? "failed" : "succeeded",
+      provider: runtimeResult?.llmResult?.provider || error?.provider || "unknown",
+      requestedProvider: runtimeResult?.llmResult?.requestedProvider || error?.provider || "unknown",
+      model: runtimeResult?.llmResult?.model || error?.model || agent.model || "unknown",
+      fallback: Boolean(runtimeResult?.llmResult?.fallback),
+      fallbackReason: runtimeResult?.llmResult?.fallbackReason || "",
+      prompt: runtimeResult?.prompt || error?.prompt || "",
+      output: runtimeResult?.rawOutput || error?.llmOutput || "",
+      error: error ? { message: error.message || "LLM execution failed", name: error.name || "Error" } : null
+    }
+  });
+}
+
 export async function orchestrateTask(state, taskId, options) {
   ensureExecutionState(state);
   const { createId, now, callLlm, requestedAgentId } = options;
@@ -154,19 +180,28 @@ export async function orchestrateTask(state, taskId, options) {
   const orchestrationId = executionRun.id;
   const startedAt = executionRun.startedAt;
 
-  startRunStep(state, executionRun, createId, now, "select_agent", { requestedAgentId: requestedAgentId || null });
   emitEvent(state, createId, now, {
-    type: "agent_selected",
+    type: EXECUTION_EVENT_TYPES.TASK_STARTED,
     orchestrationId,
     taskId: task.id,
     agentId: agent.id,
-    input: { requestedAgentId: requestedAgentId || null }
+    payload: { task: taskSnapshot }
+  });
+
+  startRunStep(state, executionRun, createId, now, "select_agent", { requestedAgentId: requestedAgentId || null });
+  emitEvent(state, createId, now, {
+    type: EXECUTION_EVENT_TYPES.AGENT_ASSIGNED,
+    orchestrationId,
+    taskId: task.id,
+    agentId: agent.id,
+    payload: { requestedAgentId: requestedAgentId || null, agent: agentSnapshot }
   });
   completeRunStep(state, executionRun, createId, now, "select_agent", { selectedAgentId: agent.id });
 
   try {
     startRunStep(state, executionRun, createId, now, "run_agent", { taskId: task.id, agentId: agent.id });
     const runtimeResult = await runAgentRuntime({ task, agent, template, project, callLlm, now });
+    emitLlmCalled(state, createId, now, { task, agent, orchestrationId, runtimeResult });
     completeRunStep(state, executionRun, createId, now, "run_agent", {
       provider: runtimeResult.llmResult.provider,
       model: runtimeResult.llmResult.model,
@@ -179,13 +214,22 @@ export async function orchestrateTask(state, taskId, options) {
     artifact.executionTraceId = executionTrace.id;
     artifact.orchestrationId = orchestrationId;
 
-    task.status = "running";
+    task.status = "review";
     agent.status = "busy";
     agent.currentTaskId = task.id;
     agent.load = Math.min(95, Number(agent.load || 0) + 10);
 
     state.artifacts.unshift(artifact);
     state.executionTraces.unshift(executionTrace);
+    emitEvent(state, createId, now, {
+      type: EXECUTION_EVENT_TYPES.ARTIFACT_CREATED,
+      orchestrationId,
+      taskId: task.id,
+      agentId: agent.id,
+      artifactId: artifact.id,
+      executionTraceId: executionTrace.id,
+      payload: { artifact }
+    });
     completeRunStep(state, executionRun, createId, now, "create_artifact", {
       artifactId: artifact.id,
       executionTraceId: executionTrace.id
@@ -196,35 +240,13 @@ export async function orchestrateTask(state, taskId, options) {
       executionTraceId: executionTrace.id
     });
     emitEvent(state, createId, now, {
-      type: "prompt_built",
-      orchestrationId,
-      taskId: task.id,
-      agentId: agent.id,
-      prompt: runtimeResult.prompt
-    });
-    emitEvent(state, createId, now, {
-      type: "llm_completed",
-      orchestrationId,
-      taskId: task.id,
-      agentId: agent.id,
-      output: runtimeResult.rawOutput,
-      provider: runtimeResult.llmResult.provider,
-      model: runtimeResult.llmResult.model
-    });
-    emitEvent(state, createId, now, {
-      type: "artifact_created",
-      orchestrationId,
-      taskId: task.id,
-      agentId: agent.id,
-      artifact
-    });
-    emitEvent(state, createId, now, {
-      type: "execution_completed",
+      type: EXECUTION_EVENT_TYPES.TASK_COMPLETED,
       orchestrationId,
       taskId: task.id,
       agentId: agent.id,
       artifactId: artifact.id,
-      executionTraceId: executionTrace.id
+      executionTraceId: executionTrace.id,
+      payload: { artifactId: artifact.id, executionTraceId: executionTrace.id }
     });
     completeRunStep(state, executionRun, createId, now, "persist_events", {
       artifactId: artifact.id,
@@ -240,16 +262,19 @@ export async function orchestrateTask(state, taskId, options) {
     const completedAt = now();
     const executionTrace = buildFailedExecutionTrace(createId, taskSnapshot, agentSnapshot, error, startedAt, completedAt);
     state.executionTraces.unshift(executionTrace);
+    if (executionRun.currentStep === "run_agent") {
+      emitLlmCalled(state, createId, now, { task, agent, orchestrationId, error });
+    }
     if (executionRun.currentStep) {
       failRunStep(state, executionRun, createId, now, executionRun.currentStep, error);
     }
     emitEvent(state, createId, now, {
-      type: "execution_failed",
+      type: EXECUTION_EVENT_TYPES.TASK_FAILED,
       orchestrationId,
       taskId: task.id,
       agentId: agent.id,
       executionTraceId: executionTrace.id,
-      error: executionTrace.error
+      payload: { error: executionTrace.error }
     });
     failExecutionRun(state, executionRun, createId, now, error, executionTrace.id);
     error.executionTrace = executionTrace;

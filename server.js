@@ -423,6 +423,10 @@ function runMockLlm(prompt, task, employee, template, project) {
   const deliverables = template?.deliverables?.length ? template.deliverables.join("、") : "执行结果";
   return JSON.stringify({
     type: "plan",
+    meta: {
+      agentId: employee.id,
+      taskId: task.id
+    },
     summary: `${employee.displayName} 已完成“${task.title}”的结构化执行结果。`,
     content: [
       `项目：${project?.name || "未知项目"}`,
