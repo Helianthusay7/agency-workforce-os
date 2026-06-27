@@ -551,6 +551,36 @@ function releaseEmployeesFromTask(state, task) {
 
 
 
+function employeeForTemplates(state, templateIds) {
+  return state.employees.find((employee) => templateIds.includes(employee.templateId));
+}
+
+function autoAssignEmployees(state, input) {
+  const text = `${input.title || ""} ${input.description || ""}`.toLowerCase();
+  const selected = [];
+  const addByTemplates = (...templateIds) => {
+    const employee = employeeForTemplates(state, templateIds);
+    if (employee && !selected.includes(employee.id)) selected.push(employee.id);
+  };
+
+  if (/douyin|抖音|creator\.douyin|视频|评论|播放|完播|自媒体|短视频/.test(text)) addByTemplates("tpl_douyin_ops");
+  if (/prd|产品|需求|范围|验收|用户|mvp|规划|目标/.test(text)) addByTemplates("tpl_pm", "tpl_product_reviewer");
+  if (/架构|后端|runtime|worker|接口|数据库|状态|权限|安全|存储|并发|api/.test(text)) addByTemplates("tpl_architect");
+  if (/前端|页面|ui|界面|交互|布局|按钮|dashboard|样式|组件/.test(text)) addByTemplates("tpl_frontend");
+  if (/测试|qa|回归|验证|用例|冒烟|接口返回|playwright/.test(text)) addByTemplates("tpl_qa");
+  if (/审核|review|审查|风险|漏洞|绕过|安全|架构债|code review/.test(text)) addByTemplates("tpl_reviewer");
+  if (/发布|release|上线|变更说明|回滚|版本/.test(text)) addByTemplates("tpl_release");
+
+  if (!selected.length) addByTemplates("tpl_pm", "tpl_architect");
+  if (!selected.length && state.employees[0]) selected.push(state.employees[0].id);
+  return selected.slice(0, 4);
+}
+
+function employeeNames(state, employeeIds) {
+  return employeeIds
+    .map((employeeId) => state.employees.find((employee) => employee.id === employeeId)?.displayName || employeeId)
+    .join(", ");
+}
 function ensureGovernanceState(state) {
   if (!Array.isArray(state.agentTemplates)) state.agentTemplates = [];
   if (!Array.isArray(state.employees)) state.employees = [];
@@ -1130,6 +1160,10 @@ async function handleApi(req, res, url) {
 
   if (req.method === "POST" && pathname === "/api/tasks") {
     const body = await readBody(req);
+    const assignmentMode = body.autoAssign || body.assignmentMode === "auto" ? "auto" : "manual";
+    const assignedEmployeeIds = assignmentMode === "auto"
+      ? autoAssignEmployees(state, body)
+      : (Array.isArray(body.assignedEmployeeIds) ? body.assignedEmployeeIds.filter(Boolean) : []);
     const task = {
       id: id("task"),
       title: String(body.title || "未命名任务"),
@@ -1138,7 +1172,9 @@ async function handleApi(req, res, url) {
       status: "todo",
       priority: body.priority || "P2",
       description: String(body.description || ""),
-      assignedEmployeeIds: Array.isArray(body.assignedEmployeeIds) ? body.assignedEmployeeIds : [],
+      assignedEmployeeIds,
+      assignmentMode,
+      assignedBy: assignmentMode === "auto" ? "ai_dispatcher" : "user",
       dueDate: body.dueDate || "",
       createdAt: now()
     };
@@ -1151,6 +1187,15 @@ async function handleApi(req, res, url) {
       targetId: task.id,
       detail: `创建任务：${task.title}`
     });
+    if (assignmentMode === "auto") {
+      addLog(state, {
+        actorType: "agent",
+        actorId: "ai_dispatcher",
+        event: "auto_assigned_employees",
+        targetId: task.id,
+        detail: `AI 分配员自动分配：${employeeNames(state, assignedEmployeeIds)}`
+      });
+    }
     await saveState(state);
     sendJson(res, 201, task);
     return;

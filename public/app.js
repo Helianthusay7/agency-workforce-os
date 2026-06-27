@@ -230,6 +230,20 @@ function renderEmployeeTemplatePreview() {
   `);
 }
 
+const realTaskLogEvents = new Set([
+  "auto_assigned_employees",
+  "assigned_employees",
+  "requested_approval",
+  "resolved_approval",
+  "ran_agent_runtime",
+  "failed_agent_runtime",
+  "created_artifact",
+  "signed_task_gate"
+]);
+
+function isRealTaskLog(log) {
+  return realTaskLogEvents.has(log.event);
+}
 const taskTemplates = {
   douyin: {
     title: "分析抖音视频数据并给出运营动作",
@@ -308,12 +322,9 @@ async function submitQuickDemand(formElement) {
   if (!demand) return;
 
   const taskSpec = buildDemandTask(demand);
-  if (!taskSpec.employee) {
-    status.textContent = "还没有可用 AI 员工，请先添加一个 AI 员工。";
-    return;
-  }
 
   button.disabled = true;
+
   status.textContent = "正在创建任务...";
   try {
     const task = await api("/api/tasks", {
@@ -324,14 +335,16 @@ async function submitQuickDemand(formElement) {
         priority: taskSpec.priority,
         description: taskSpec.description,
         dueDate: "",
-        assignedEmployeeIds: [taskSpec.employee.id]
+        assignmentMode: "auto",
+        autoAssign: true,
+        assignedEmployeeIds: []
       })
     });
 
     status.textContent = "正在让 AI 员工执行...";
     await api(`/api/tasks/${task.id}/run`, {
       method: "POST",
-      body: JSON.stringify({ employeeId: taskSpec.employee.id })
+      body: JSON.stringify({})
     });
 
     formElement.reset();
@@ -346,6 +359,11 @@ async function submitQuickDemand(formElement) {
   }
 }
 
+function syncTaskAssignmentMode() {
+  const mode = $("#task-assignment-mode")?.value || "auto";
+  const employeeSelect = $("#task-employee-select");
+  if (employeeSelect) employeeSelect.disabled = mode === "auto";
+}
 function applyTaskTemplate(templateKey) {
   const template = taskTemplates[templateKey];
   if (!template) return;
@@ -357,6 +375,8 @@ function applyTaskTemplate(templateKey) {
   form.elements.projectId.value = state.data.projects[0]?.id || "";
   const employee = employeeForTemplate(template.templateId);
   if (employee) form.elements.employeeId.value = employee.id;
+  if (form.elements.assignmentMode) form.elements.assignmentMode.value = "manual";
+  syncTaskAssignmentMode();
   $("#task-modal").showModal();
 }
 
@@ -455,7 +475,10 @@ function signoffStatusText(status) {
   return labels[status] || status || "未知结果";
 }
 function taskLogs(taskId) {
-  return state.data.auditLogs.filter((log) => log.targetId === taskId || taskApprovals(taskId).some((approval) => approval.id === log.targetId));
+  return state.data.auditLogs.filter((log) => {
+    const belongsToTask = log.targetId === taskId || taskApprovals(taskId).some((approval) => approval.id === log.targetId);
+    return belongsToTask && isRealTaskLog(log);
+  });
 }
 
 function taskGuidance(task, artifacts) {
@@ -803,7 +826,7 @@ function renderEmployees() {
           </article>
         `;
       })
-      .join(""));
+      .join("") || `<div class="empty">还没有 AI 员工</div>`);
 }
 
 function renderApprovals() {
@@ -853,6 +876,7 @@ function renderArtifacts() {
 function renderLogs() {
   setHtml($("#log-list"),
     state.data.auditLogs
+      .filter(isRealTaskLog)
       .slice(0, 8)
       .map((log) => `
         <article class="log-row">
@@ -860,7 +884,7 @@ function renderLogs() {
           <small>${log.actorType === "agent" ? employeeName(log.actorId) : userName(log.actorId)} · ${fmtDate(log.createdAt)}</small>
         </article>
       `)
-      .join(""));
+      .join("") || `<div class="empty">还没有真实任务日志</div>`);
 }
 
 function render() {
@@ -1000,6 +1024,9 @@ function bindEvents() {
 
   $("#employee-template-select").addEventListener("change", renderEmployeeTemplatePreview);
 
+  $("#task-assignment-mode")?.addEventListener("change", syncTaskAssignmentMode);
+  syncTaskAssignmentMode();
+
   $("#open-task-modal").addEventListener("click", () => $("#task-modal").showModal());
   $("#open-employee-modal").addEventListener("click", () => $("#employee-modal").showModal());
 
@@ -1011,6 +1038,7 @@ function bindEvents() {
   $("#task-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const assignmentMode = form.get("assignmentMode") || "auto";
     await api("/api/tasks", {
       method: "POST",
       body: JSON.stringify({
@@ -1019,7 +1047,9 @@ function bindEvents() {
         priority: form.get("priority"),
         description: form.get("description"),
         dueDate: form.get("dueDate"),
-        assignedEmployeeIds: [form.get("employeeId")]
+        assignmentMode,
+        autoAssign: assignmentMode === "auto",
+        assignedEmployeeIds: assignmentMode === "manual" ? [form.get("employeeId")].filter(Boolean) : []
       })
     });
     event.currentTarget.reset();
