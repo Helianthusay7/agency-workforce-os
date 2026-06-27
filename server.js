@@ -581,6 +581,54 @@ function employeeNames(state, employeeIds) {
     .map((employeeId) => state.employees.find((employee) => employee.id === employeeId)?.displayName || employeeId)
     .join(", ");
 }
+function findTaskAgent(state, task, requestedAgentId) {
+  if (!task) return null;
+  if (requestedAgentId) {
+    return state.employees.find((employee) => employee.id === requestedAgentId && task.assignedEmployeeIds.includes(employee.id)) || null;
+  }
+  return task.assignedEmployeeIds
+    .map((employeeId) => state.employees.find((employee) => employee.id === employeeId))
+    .find(Boolean) || null;
+}
+
+function createExecutionApproval(state, task, agent, reason) {
+  const existingApproval = state.approvals.find((approval) => {
+    return approval.taskId === task.id
+      && approval.status === "pending"
+      && (!approval.requesterEmployeeId || approval.requesterEmployeeId === agent.id);
+  });
+  if (existingApproval) {
+    task.status = "waiting_approval";
+    return { approval: existingApproval, reused: true };
+  }
+
+  const approval = {
+    id: id("apr"),
+    taskId: task.id,
+    title: `执行审批：${agent.displayName} / ${task.title}`,
+    requesterEmployeeId: agent.id,
+    reviewerUserId: task.ownerUserId || state.users[0]?.id,
+    status: "pending",
+    risk: "medium",
+    action: `AI 员工 ${agent.displayName} 需要审批后执行。原因：${reason || "权限要求 Execute With Approval"}`,
+    createdAt: now(),
+    source: "agent_runtime"
+  };
+  task.status = "waiting_approval";
+  state.approvals.unshift(approval);
+  addLog(state, {
+    actorType: "agent",
+    actorId: agent.id,
+    event: "requested_approval",
+    targetId: approval.id,
+    detail: approval.title
+  });
+  return { approval, reused: false };
+}
+
+function isApprovalRequiredError(error) {
+  return error?.status === 403 && /requires approved execution/i.test(String(error.message || ""));
+}
 function ensureGovernanceState(state) {
   if (!Array.isArray(state.agentTemplates)) state.agentTemplates = [];
   if (!Array.isArray(state.employees)) state.employees = [];
@@ -1348,6 +1396,10 @@ async function handleApi(req, res, url) {
     approval.status = body.status === "approved" ? "approved" : "rejected";
     approval.resolvedAt = now();
     approval.resolutionNote = String(body.note || "");
+    const approvalTask = state.tasks.find((task) => task.id === approval.taskId);
+    if (approvalTask && approvalTask.status === "waiting_approval" && approval.status === "approved") {
+      approvalTask.status = "todo";
+    }
     addLog(state, {
       actorType: "user",
       actorId: approval.reviewerUserId,
@@ -1580,6 +1632,23 @@ async function handleApi(req, res, url) {
       sendJson(res, 201, result);
     } catch (error) {
       if (error.status === 404) return notFound(res);
+      if (isApprovalRequiredError(error)) {
+        const task = state.tasks.find((item) => item.id === taskRunMatch[1]);
+        const agent = findTaskAgent(state, task, body.employeeId);
+        if (task && agent) {
+          const { approval, reused } = createExecutionApproval(state, task, agent, error.message);
+          await saveState(state);
+          sendJson(res, 202, {
+            status: "waiting_approval",
+            error: error.message,
+            approval,
+            reused,
+            task,
+            executionTrace: error.executionTrace
+          });
+          return;
+        }
+      }
       if (error.status === 400 || error.status === 403) {
         sendJson(res, error.status, { error: error.message, executionTrace: error.executionTrace });
         return;
