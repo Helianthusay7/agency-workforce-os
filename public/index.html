@@ -255,6 +255,32 @@
           <select name="teamId" id="employee-team-select"></select>
         </label>
         <label>
+          Provider
+          <select name="provider">
+            <option value="mock">mock</option>
+            <option value="openai-compatible" selected>openai-compatible</option>
+            <option value="openai">openai</option>
+          </select>
+        </label>
+        <label>
+          Model
+          <input name="model" list="model-presets" value="gpt-5.4-mini" placeholder="gpt-5.4-mini" />
+        </label>
+        <label>
+          Key Ref
+          <input name="keyRef" value="OPENAI_TEST_KEY" placeholder="OPENAI_TEST_KEY" />
+        </label>
+        <label>
+          Base URL
+          <input name="baseUrl" value="https://api.lmm.best:9000/v1" placeholder="https://api.lmm.best:9000/v1" />
+        </label>
+        <datalist id="model-presets">
+          <option value="gpt-5.4-mini"></option>
+          <option value="gpt-5.4"></option>
+          <option value="gpt-4.1-mini"></option>
+          <option value="mock-local"></option>
+        </datalist>
+        <label>
           权限
           <select name="permission">
             <option value="Read Only">只读</option>

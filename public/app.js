@@ -433,6 +433,27 @@ function taskArtifacts(taskId) {
   return state.data.artifacts.filter((artifact) => artifact.taskId === taskId);
 }
 
+function taskSignoffs(task) {
+  return Array.isArray(task?.signoffs) ? task.signoffs : [];
+}
+
+function signoffStageText(stage) {
+  const labels = {
+    qa: "QA 验证",
+    review: "独立审核",
+    product: "产品验收",
+    release: "发布门禁"
+  };
+  return labels[stage] || stage || "未知阶段";
+}
+
+function signoffStatusText(status) {
+  const labels = {
+    passed: "通过",
+    failed: "未通过"
+  };
+  return labels[status] || status || "未知结果";
+}
 function taskLogs(taskId) {
   return state.data.auditLogs.filter((log) => log.targetId === taskId || taskApprovals(taskId).some((approval) => approval.id === log.targetId));
 }
@@ -469,6 +490,7 @@ function renderDrawer() {
   if (!task) return;
 
   const approvals = taskApprovals(task.id);
+  const signoffs = taskSignoffs(task);
   const artifacts = taskArtifacts(task.id);
   const logs = taskLogs(task.id);
   const chatMessages = taskChatMessages(task.id);
@@ -554,6 +576,16 @@ function renderDrawer() {
         <span>${statusText(approval.status)} · ${approval.risk} · ${fmtDate(approval.createdAt)}</span>
         <span>${approval.action}</span>
       </div>`).join("") || `<div class="empty">还没有审批记录</div>`}
+    </section>
+
+
+    <section class="detail-section">
+      <h3>治理签名</h3>
+      ${signoffs.map((signoff) => `<div class="timeline-row">
+        <strong>${signoffStageText(signoff.stage)} · ${signoffStatusText(signoff.status)}</strong>
+        <span>${employeeName(signoff.employeeId)} · ${fmtDate(signoff.createdAt)}</span>
+        <span>${signoff.note || "无备注"}</span>
+      </div>`).join("") || `<div class="empty">还没有治理签名记录</div>`}
     </section>
 
     <section class="detail-section">
@@ -753,8 +785,18 @@ function renderEmployees() {
             <div class="employee-meta">
               <span class="pill">${teamName(employee.teamId)}</span>
               <span class="pill">${employee.permission}</span>
+              <span class="pill">${employee.llmConfig?.provider || "mock"}</span>
               <span class="pill">${employee.model}</span>
             </div>
+            <form class="artifact-form" data-llm-form="${employee.id}">
+              <select name="provider">
+                ${["mock", "openai-compatible", "openai"].map((provider) => `<option value="${provider}" ${(employee.llmConfig?.provider || "mock") === provider ? "selected" : ""}>${provider}</option>`).join("")}
+              </select>
+              <input name="model" list="model-presets" value="${employee.llmConfig?.model || employee.model || "gpt-5.4-mini"}" placeholder="model" />
+              <input name="keyRef" value="${employee.llmConfig?.keyRef || ""}" placeholder="KEY_REF" />
+              <input name="baseUrl" value="${employee.llmConfig?.baseUrl || ""}" placeholder="base_url" />
+              <button class="secondary-button" type="submit">保存模型</button>
+            </form>
             <div class="load-track" aria-label="Load ${employee.load}%">
               <div class="load-bar" style="width:${employee.load}%"></div>
             </div>
@@ -994,6 +1036,14 @@ function bindEvents() {
         displayName: form.get("displayName"),
         templateId: form.get("templateId"),
         teamId: form.get("teamId"),
+        model: form.get("model"),
+        llmConfig: {
+          provider: form.get("provider"),
+          model: form.get("model"),
+          keyRef: form.get("keyRef"),
+          baseUrl: form.get("baseUrl"),
+          allowMockFallback: form.get("provider") === "mock"
+        },
         permission: form.get("permission")
       })
     });
@@ -1008,6 +1058,23 @@ function bindEvents() {
     if (!(formElement instanceof HTMLFormElement)) return;
     
     
+    const llmEmployeeId = formElement.dataset.llmForm;
+    if (llmEmployeeId) {
+      event.preventDefault();
+      const form = new FormData(formElement);
+      await api(`/api/employees/${llmEmployeeId}/llm-config`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          provider: form.get("provider"),
+          model: form.get("model"),
+          keyRef: form.get("keyRef"),
+          baseUrl: form.get("baseUrl"),
+          allowMockFallback: form.get("provider") === "mock"
+        })
+      });
+      await load();
+      return;
+    }
     const chatTaskId = formElement.dataset.chatForm;
     if (chatTaskId) {
       event.preventDefault();
@@ -1073,6 +1140,8 @@ function bindEvents() {
     const agentRunTask = target.dataset.agentRun;
     const runTask = target.dataset.runTask;
     const doneTask = target.dataset.doneTask;
+    const signoffTaskId = target.dataset.signoffTask;
+    const signoffStage = target.dataset.signoffStage;
     const approvalTask = target.dataset.approvalTask;
     const approveId = target.dataset.approve;
     const rejectId = target.dataset.reject;
@@ -1082,6 +1151,7 @@ function bindEvents() {
     if (agentRunTask) await runAgent(agentRunTask);
     if (runTask) await updateTaskStatus(runTask, "running");
     if (doneTask) await updateTaskStatus(doneTask, "done");
+    if (signoffTaskId) await signoffTask(signoffTaskId, signoffStage);
     if (approvalTask) await requestApproval(approvalTask);
     if (approveId) {
       await api(`/api/approvals/${approveId}/resolve`, {

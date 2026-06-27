@@ -16,6 +16,7 @@ const port = Number(process.env.PORT || 4173);
 
 const now = () => new Date().toISOString();
 const id = (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
+const DEFAULT_LLM_MODEL = "gpt-5.4-mini";
 
 const douyinOpsTemplate = {
   id: "tpl_douyin_ops",
@@ -127,8 +128,8 @@ const governanceEmployees = [
     displayName: "Builder",
     title: "AI 开发工程师",
     teamId: "team_engineering",
-    model: "gpt-5",
-    llmConfig: { provider: "mock", model: "gpt-5", keyRef: "", temperature: 0.2, timeoutMs: 6000, allowMockFallback: true },
+    model: DEFAULT_LLM_MODEL,
+    llmConfig: { provider: "mock", model: DEFAULT_LLM_MODEL, keyRef: "", temperature: 0.2, timeoutMs: 6000, allowMockFallback: true },
     permission: "Execute With Approval",
     status: "available",
     load: 0,
@@ -140,8 +141,8 @@ const governanceEmployees = [
     displayName: "QA",
     title: "AI 测试工程师",
     teamId: "team_engineering",
-    model: "gpt-5",
-    llmConfig: { provider: "mock", model: "gpt-5", keyRef: "", temperature: 0.1, timeoutMs: 6000, allowMockFallback: true },
+    model: DEFAULT_LLM_MODEL,
+    llmConfig: { provider: "mock", model: DEFAULT_LLM_MODEL, keyRef: "", temperature: 0.1, timeoutMs: 6000, allowMockFallback: true },
     permission: "Read Only",
     status: "available",
     load: 0,
@@ -153,8 +154,8 @@ const governanceEmployees = [
     displayName: "Product",
     title: "AI 产品验收员",
     teamId: "team_product",
-    model: "gpt-5",
-    llmConfig: { provider: "mock", model: "gpt-5", keyRef: "", temperature: 0.2, timeoutMs: 6000, allowMockFallback: true },
+    model: DEFAULT_LLM_MODEL,
+    llmConfig: { provider: "mock", model: DEFAULT_LLM_MODEL, keyRef: "", temperature: 0.2, timeoutMs: 6000, allowMockFallback: true },
     permission: "Suggest",
     status: "available",
     load: 0,
@@ -166,8 +167,8 @@ const governanceEmployees = [
     displayName: "Release",
     title: "AI 发布管理员",
     teamId: "team_growth",
-    model: "gpt-5-mini",
-    llmConfig: { provider: "mock", model: "gpt-5-mini", keyRef: "", temperature: 0.2, timeoutMs: 6000, allowMockFallback: true },
+    model: DEFAULT_LLM_MODEL,
+    llmConfig: { provider: "mock", model: DEFAULT_LLM_MODEL, keyRef: "", temperature: 0.2, timeoutMs: 6000, allowMockFallback: true },
     permission: "Suggest",
     status: "available",
     load: 0,
@@ -294,10 +295,10 @@ const seedState = {
       displayName: "Iris",
       title: "AI 产品经理",
       teamId: "team_product",
-      model: "gpt-5",
+      model: DEFAULT_LLM_MODEL,
       llmConfig: {
         provider: "mock",
-        model: "gpt-5",
+        model: DEFAULT_LLM_MODEL,
         keyRef: "",
         temperature: 0.2,
         timeoutMs: 6000,
@@ -314,10 +315,10 @@ const seedState = {
       displayName: "Mason",
       title: "AI 架构师",
       teamId: "team_engineering",
-      model: "gpt-5",
+      model: DEFAULT_LLM_MODEL,
       llmConfig: {
         provider: "mock",
-        model: "gpt-5",
+        model: DEFAULT_LLM_MODEL,
         keyRef: "",
         temperature: 0.2,
         timeoutMs: 6000,
@@ -334,10 +335,10 @@ const seedState = {
       displayName: "Nova",
       title: "AI 前端工程师",
       teamId: "team_engineering",
-      model: "gpt-5",
+      model: DEFAULT_LLM_MODEL,
       llmConfig: {
         provider: "mock",
-        model: "gpt-5",
+        model: DEFAULT_LLM_MODEL,
         keyRef: "",
         temperature: 0.2,
         timeoutMs: 6000,
@@ -354,10 +355,10 @@ const seedState = {
       displayName: "Rhea",
       title: "AI 代码审查员",
       teamId: "team_engineering",
-      model: "gpt-5",
+      model: DEFAULT_LLM_MODEL,
       llmConfig: {
         provider: "mock",
-        model: "gpt-5",
+        model: DEFAULT_LLM_MODEL,
         keyRef: "",
         temperature: 0.1,
         timeoutMs: 6000,
@@ -374,10 +375,10 @@ const seedState = {
       displayName: "Sol",
       title: "AI 增长策划",
       teamId: "team_growth",
-      model: "gpt-5-mini",
+      model: DEFAULT_LLM_MODEL,
       llmConfig: {
         provider: "mock",
-        model: "gpt-5-mini",
+        model: DEFAULT_LLM_MODEL,
         keyRef: "",
         temperature: 0.4,
         timeoutMs: 6000,
@@ -576,8 +577,11 @@ function ensureGovernanceState(state) {
     existingEmployee.templateId = employee.templateId;
     existingEmployee.title = existingEmployee.title || employee.title;
     existingEmployee.teamId = existingEmployee.teamId || employee.teamId;
-    existingEmployee.model = existingEmployee.model || employee.model;
+    existingEmployee.model = ["gpt-5", "gpt-5-mini", "mock-local", ""].includes(String(existingEmployee.model || "")) ? employee.model : existingEmployee.model;
     existingEmployee.llmConfig = existingEmployee.llmConfig || { ...employee.llmConfig };
+    if (["gpt-5", "gpt-5-mini", "mock-local", ""].includes(String(existingEmployee.llmConfig.model || ""))) {
+      existingEmployee.llmConfig.model = employee.llmConfig.model;
+    }
     existingEmployee.permission = normalizePermissionValue(existingEmployee.permission || employee.permission);
     existingEmployee.status = existingEmployee.status || "available";
     existingEmployee.load = Number.isFinite(Number(existingEmployee.load)) ? Number(existingEmployee.load) : 0;
@@ -1057,14 +1061,14 @@ function deriveDashboard(state) {
   };
 }
 
-function normalizeLlmConfig(input = {}, current = {}, modelFallback = "mock-local") {
+function normalizeLlmConfig(input = {}, current = {}, modelFallback = DEFAULT_LLM_MODEL) {
   const source = input && typeof input === "object" ? input : {};
   const existing = current && typeof current === "object" ? current : {};
   const provider = String(source.provider || existing.provider || "mock").toLowerCase();
   const allowedProviders = new Set(["mock", "openai", "openai-compatible"]);
   return {
     provider: allowedProviders.has(provider) ? provider : "mock",
-    model: String(source.model || existing.model || modelFallback || "mock-local"),
+    model: String(source.model || existing.model || modelFallback || DEFAULT_LLM_MODEL),
     keyRef: String(source.keyRef || source.apiKeyEnv || existing.keyRef || existing.apiKeyEnv || ""),
     baseUrl: String(source.baseUrl || existing.baseUrl || ""),
     temperature: Number.isFinite(Number(source.temperature ?? existing.temperature)) ? Number(source.temperature ?? existing.temperature) : 0.2,
@@ -1073,6 +1077,20 @@ function normalizeLlmConfig(input = {}, current = {}, modelFallback = "mock-loca
   };
 }
 
+function ensureEmployeeLlmDefaults(state) {
+  if (!Array.isArray(state.employees)) return;
+  const legacyDefaultModels = new Set(["gpt-5", "gpt-5-mini", "mock-local", ""]);
+  for (const employee of state.employees) {
+    employee.llmConfig = normalizeLlmConfig(employee.llmConfig || {}, {}, employee.model || DEFAULT_LLM_MODEL);
+    const provider = String(employee.llmConfig.provider || "mock");
+    const model = String(employee.llmConfig.model || employee.model || "");
+    const hasExternalKey = Boolean(employee.llmConfig.keyRef || employee.llmConfig.apiKeyEnv);
+    if (provider === "mock" && legacyDefaultModels.has(model) && !hasExternalKey) {
+      employee.model = DEFAULT_LLM_MODEL;
+      employee.llmConfig.model = DEFAULT_LLM_MODEL;
+    }
+  }
+}
 function normalizePermissionValue(permission) {
   const value = String(permission || "Suggest").trim().toLowerCase();
   const aliases = {
@@ -1100,6 +1118,7 @@ async function handleApi(req, res, url) {
   const pathname = url.pathname;
   ensureBusinessSkillState(state);
   ensureGovernanceState(state);
+  ensureEmployeeLlmDefaults(state);
 
   if (req.method === "GET" && pathname === "/api/state") {
     ensureChatState(state);
@@ -1224,8 +1243,8 @@ async function handleApi(req, res, url) {
       displayName: String(body.displayName || template.name.split(" ")[0]),
       title: String(body.title || `AI ${template.name}`),
       teamId: body.teamId || state.teams[0]?.id,
-      model: body.model || "gpt-5",
-      llmConfig: normalizeLlmConfig(body.llmConfig, {}, body.model || "gpt-5"),
+      model: body.model || DEFAULT_LLM_MODEL,
+      llmConfig: normalizeLlmConfig(body.llmConfig, {}, body.model || DEFAULT_LLM_MODEL),
       permission: normalizePermissionValue(body.permission),
       source: template.source || "local",
       division: template.division || "",
