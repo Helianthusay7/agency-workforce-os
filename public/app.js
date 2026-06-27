@@ -5,7 +5,8 @@ const state = {
   taskSearch: "",
   employeeTemplateSearch: "",
   currentView: "dashboard",
-  selectedTaskId: null
+  selectedTaskId: null,
+  editingEmployeeId: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -408,9 +409,6 @@ function taskActionButtons(task) {
   if (task.status === "approved") {
     actions.push(`<button class="secondary-button" data-signoff-task="${task.id}" data-signoff-stage="release">发布完成</button>`);
   }
-  if (task.status !== "waiting_approval") {
-    actions.push(`<button class="secondary-button" data-approval-task="${task.id}">请求审批</button>`);
-  }
   return `<div class="task-actions">${actions.join("")}</div>`;
 }
 
@@ -797,21 +795,22 @@ function renderEmployees() {
       .map((employee) => {
         const template = templateFor(employee);
         return `
-          <article class="employee-card">
+          <article class="employee-card compact-employee-card">
             <div class="employee-top">
               <div>
-                <h3>${employee.displayName} · ${employee.title}</h3>
-                <p>${template?.summary || ""}</p>
+                <h3>${employee.displayName}</h3>
+                <p>${employee.title}</p>
               </div>
-              <span class="pill">${employee.status === "busy" ? "忙碌" : "可用"}</span>
+              <button class="secondary-button compact-edit-button" type="button" data-edit-employee="${employee.id}">${state.editingEmployeeId === employee.id ? "收起" : "编辑"}</button>
             </div>
-            <div class="employee-meta">
+            <div class="employee-meta compact-employee-meta">
+              <span class="pill">${employee.status === "busy" ? "忙碌" : "可用"}</span>
               <span class="pill">${teamName(employee.teamId)}</span>
               <span class="pill">${employee.permission}</span>
               <span class="pill">${employee.llmConfig?.provider || "mock"}</span>
-              <span class="pill">${employee.model}</span>
+              <span class="pill">${employee.llmConfig?.model || employee.model}</span>
             </div>
-            <form class="artifact-form" data-llm-form="${employee.id}">
+            ${state.editingEmployeeId === employee.id ? `<form class="artifact-form employee-config-form" data-llm-form="${employee.id}">
               <select name="provider">
                 ${["mock", "openai-compatible", "openai"].map((provider) => `<option value="${provider}" ${(employee.llmConfig?.provider || "mock") === provider ? "selected" : ""}>${provider}</option>`).join("")}
               </select>
@@ -821,10 +820,7 @@ function renderEmployees() {
               <input name="timeoutMs" type="number" min="1000" step="1000" value="${employee.llmConfig?.timeoutMs || ((employee.llmConfig?.provider || "mock") === "mock" ? 6000 : 30000)}" placeholder="timeout ms" />
               <input name="temperature" type="number" min="0" max="2" step="0.1" value="${employee.llmConfig?.temperature ?? 0.2}" placeholder="temperature" />
               <button class="secondary-button" type="submit">保存模型</button>
-            </form>
-            <div class="load-track" aria-label="Load ${employee.load}%">
-              <div class="load-bar" style="width:${employee.load}%"></div>
-            </div>
+            </form>` : ""}
           </article>
         `;
       })
@@ -1178,7 +1174,7 @@ function bindEvents() {
     const doneTask = target.dataset.doneTask;
     const signoffTaskId = target.dataset.signoffTask;
     const signoffStage = target.dataset.signoffStage;
-    const approvalTask = target.dataset.approvalTask;
+    const editEmployeeId = target.dataset.editEmployee;
     const approveId = target.dataset.approve;
     const rejectId = target.dataset.reject;
 
@@ -1188,7 +1184,10 @@ function bindEvents() {
     if (runTask) await updateTaskStatus(runTask, "running");
     if (doneTask) await updateTaskStatus(doneTask, "done");
     if (signoffTaskId) await signoffTask(signoffTaskId, signoffStage);
-    if (approvalTask) await requestApproval(approvalTask);
+    if (editEmployeeId) {
+      state.editingEmployeeId = state.editingEmployeeId === editEmployeeId ? null : editEmployeeId;
+      renderEmployees();
+    }
     if (approveId) {
       await api(`/api/approvals/${approveId}/resolve`, {
         method: "POST",

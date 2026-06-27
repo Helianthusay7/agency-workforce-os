@@ -712,3 +712,34 @@ label {
 .content-grid.view-tasks .task-panel {
   min-height: 700px;
 }
+
+.compact-employee-card {
+  padding: 9px 10px;
+}
+
+.compact-employee-card .employee-top {
+  align-items: center;
+}
+
+.compact-employee-card h3 {
+  font-size: 13px;
+}
+
+.compact-employee-card p {
+  margin-top: 2px;
+  line-height: 1.25;
+}
+
+.compact-employee-meta {
+  margin-top: 7px;
+}
+
+.compact-edit-button {
+  min-height: 28px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.employee-config-form {
+  margin-top: 9px;
+}
