@@ -69,8 +69,9 @@ implemented -> QA tested -> Reviewer reviewed -> Product approved -> Release don
 要求 Node.js 20 或更高版本。
 
 ```powershell
-cd D:\ai\agency
-node server.js
+git clone https://github.com/Helianthusay7/agency-workforce-os.git
+cd agency-workforce-os
+npm start
 ```
 
 打开：

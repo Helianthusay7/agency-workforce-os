@@ -231,7 +231,7 @@ const seedState = {
       teamId: "team_product",
       status: "active",
       health: "on-track",
-      repository: "D:\\ai\\agency",
+      repository: "",
       knowledgeSources: ["agency-agents 岗位模板", "产品需求池", "团队审批规则"]
     },
     {
