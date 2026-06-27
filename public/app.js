@@ -818,6 +818,8 @@ function renderEmployees() {
               <input name="model" list="model-presets" value="${employee.llmConfig?.model || employee.model || "gpt-5.4-mini"}" placeholder="model" />
               <input name="keyRef" value="${employee.llmConfig?.keyRef || ""}" placeholder="KEY_REF" />
               <input name="baseUrl" value="${employee.llmConfig?.baseUrl || ""}" placeholder="base_url" />
+              <input name="timeoutMs" type="number" min="1000" step="1000" value="${employee.llmConfig?.timeoutMs || ((employee.llmConfig?.provider || "mock") === "mock" ? 6000 : 30000)}" placeholder="timeout ms" />
+              <input name="temperature" type="number" min="0" max="2" step="0.1" value="${employee.llmConfig?.temperature ?? 0.2}" placeholder="temperature" />
               <button class="secondary-button" type="submit">保存模型</button>
             </form>
             <div class="load-track" aria-label="Load ${employee.load}%">
@@ -1072,6 +1074,8 @@ function bindEvents() {
           model: form.get("model"),
           keyRef: form.get("keyRef"),
           baseUrl: form.get("baseUrl"),
+          timeoutMs: Number(form.get("timeoutMs") || 0) || undefined,
+          temperature: form.get("temperature") === "" ? undefined : Number(form.get("temperature")),
           allowMockFallback: form.get("provider") === "mock"
         },
         permission: form.get("permission")
@@ -1099,6 +1103,8 @@ function bindEvents() {
           model: form.get("model"),
           keyRef: form.get("keyRef"),
           baseUrl: form.get("baseUrl"),
+          timeoutMs: Number(form.get("timeoutMs") || 0) || undefined,
+          temperature: form.get("temperature") === "" ? undefined : Number(form.get("temperature")),
           allowMockFallback: form.get("provider") === "mock"
         })
       });

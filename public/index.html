@@ -275,11 +275,19 @@
         </label>
         <label>
           Key Ref
-          <input name="keyRef" value="OPENAI_TEST_KEY" placeholder="OPENAI_TEST_KEY" />
+          <input name="keyRef" placeholder="OPENAI_API_KEY" />
         </label>
         <label>
           Base URL
-          <input name="baseUrl" value="https://api.lmm.best:9000/v1" placeholder="https://api.lmm.best:9000/v1" />
+          <input name="baseUrl" placeholder="https://api.example.com/v1" />
+        </label>
+        <label>
+          Timeout ms
+          <input name="timeoutMs" type="number" min="1000" step="1000" value="30000" placeholder="30000" />
+        </label>
+        <label>
+          Temperature
+          <input name="temperature" type="number" min="0" max="2" step="0.1" value="0.2" placeholder="0.2" />
         </label>
         <datalist id="model-presets">
           <option value="gpt-5.4-mini"></option>

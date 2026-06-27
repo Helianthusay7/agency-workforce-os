@@ -905,7 +905,7 @@ function getLlmConfig(employee) {
     requestedProvider,
     model: process.env.AGENCY_LLM_MODEL || employee.model || "mock-local",
     allowMockFallback: process.env.AGENCY_LLM_ALLOW_MOCK_FALLBACK !== "false",
-    timeoutMs: Number(process.env.AGENCY_LLM_TIMEOUT_MS || 6000)
+    timeoutMs: Number(process.env.AGENCY_LLM_TIMEOUT_MS || defaultLlmTimeoutMs(requestedProvider))
   };
 }
 
@@ -1091,18 +1091,26 @@ function deriveDashboard(state) {
   };
 }
 
+function defaultLlmTimeoutMs(provider) {
+  return provider === "mock" ? 6000 : 30000;
+}
 function normalizeLlmConfig(input = {}, current = {}, modelFallback = DEFAULT_LLM_MODEL) {
   const source = input && typeof input === "object" ? input : {};
   const existing = current && typeof current === "object" ? current : {};
-  const provider = String(source.provider || existing.provider || "mock").toLowerCase();
+  const requestedProvider = String(source.provider || existing.provider || "mock").toLowerCase();
   const allowedProviders = new Set(["mock", "openai", "openai-compatible"]);
+  const provider = allowedProviders.has(requestedProvider) ? requestedProvider : "mock";
+  const previousProvider = String(existing.provider || "mock").toLowerCase();
+  const providerChanged = Boolean(source.provider) && provider !== previousProvider;
+  const hasSourceTimeout = source.timeoutMs !== undefined && source.timeoutMs !== "";
+  const timeoutCandidate = hasSourceTimeout ? source.timeoutMs : (providerChanged ? undefined : existing.timeoutMs);
   return {
-    provider: allowedProviders.has(provider) ? provider : "mock",
+    provider,
     model: String(source.model || existing.model || modelFallback || DEFAULT_LLM_MODEL),
     keyRef: String(source.keyRef || source.apiKeyEnv || existing.keyRef || existing.apiKeyEnv || ""),
     baseUrl: String(source.baseUrl || existing.baseUrl || ""),
     temperature: Number.isFinite(Number(source.temperature ?? existing.temperature)) ? Number(source.temperature ?? existing.temperature) : 0.2,
-    timeoutMs: Number.isFinite(Number(source.timeoutMs ?? existing.timeoutMs)) ? Number(source.timeoutMs ?? existing.timeoutMs) : 6000,
+    timeoutMs: Number.isFinite(Number(timeoutCandidate)) ? Number(timeoutCandidate) : defaultLlmTimeoutMs(provider),
     allowMockFallback: typeof source.allowMockFallback === "boolean" ? source.allowMockFallback : existing.allowMockFallback !== false
   };
 }

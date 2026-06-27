@@ -1,3 +1,6 @@
+function defaultTimeoutMs(provider) {
+  return provider === "mock" ? 6000 : 30000;
+}
 function numberOrDefault(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -20,7 +23,7 @@ function resolveAgentLlmConfig(agent) {
     keyRef,
     baseUrl: employeeConfig.baseUrl || process.env.AGENCY_LLM_BASE_URL || "",
     temperature: numberOrDefault(employeeConfig.temperature ?? process.env.AGENCY_LLM_TEMPERATURE, 0.2),
-    timeoutMs: numberOrDefault(employeeConfig.timeoutMs ?? process.env.AGENCY_LLM_TIMEOUT_MS, 6000),
+    timeoutMs: numberOrDefault(employeeConfig.timeoutMs ?? process.env.AGENCY_LLM_TIMEOUT_MS, defaultTimeoutMs(provider)),
     allowMockFallback: boolOrDefault(employeeConfig.allowMockFallback ?? process.env.AGENCY_LLM_ALLOW_MOCK_FALLBACK, true)
   };
 }
