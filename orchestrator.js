@@ -302,7 +302,7 @@ export async function orchestrateTask(state, taskId, options) {
     artifact.executionTraceId = executionTrace.id;
     artifact.orchestrationId = orchestrationId;
 
-    task.status = "review";
+    task.status = "implemented";
     agent.status = "busy";
     agent.currentTaskId = task.id;
     agent.load = Math.min(95, Number(agent.load || 0) + 10);

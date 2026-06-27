@@ -120,6 +120,10 @@ function statusFilterOptions() {
     ["all", "全部状态"],
     ["todo", "待处理"],
     ["running", "执行中"],
+    ["implemented", "已实现"],
+    ["tested", "已测试"],
+    ["reviewed", "已审核"],
+    ["approved", "已批准"],
     ["review", "待审阅"],
     ["waiting_approval", "待审批"],
     ["done", "已完成"]
@@ -153,6 +157,9 @@ function statusText(status) {
   const labels = {
     todo: "待处理",
     running: "执行中",
+    implemented: "已实现",
+    tested: "已测试",
+    reviewed: "已审核",
     review: "待审阅",
     waiting_approval: "待审批",
     done: "已完成",
@@ -369,10 +376,21 @@ function taskActionButtons(task) {
   if (task.status === "todo") {
     actions.push(`<button class="secondary-button" data-run-task="${task.id}">开始任务</button>`);
   }
+  if (task.status === "implemented") {
+    actions.push(`<button class="secondary-button" data-signoff-task="${task.id}" data-signoff-stage="qa">QA 签名</button>`);
+  }
+  if (task.status === "tested") {
+    actions.push(`<button class="secondary-button" data-signoff-task="${task.id}" data-signoff-stage="review">审核签名</button>`);
+  }
+  if (task.status === "reviewed") {
+    actions.push(`<button class="secondary-button" data-signoff-task="${task.id}" data-signoff-stage="product">产品批准</button>`);
+  }
+  if (task.status === "approved") {
+    actions.push(`<button class="secondary-button" data-signoff-task="${task.id}" data-signoff-stage="release">发布完成</button>`);
+  }
   if (task.status !== "waiting_approval") {
     actions.push(`<button class="secondary-button" data-approval-task="${task.id}">请求审批</button>`);
   }
-  actions.push(`<button class="secondary-button" data-done-task="${task.id}">标记完成</button>`);
   return `<div class="task-actions">${actions.join("")}</div>`;
 }
 
@@ -881,6 +899,14 @@ async function updateTaskStatus(taskId, status) {
   if (state.selectedTaskId) renderDrawer();
 }
 
+async function signoffTask(taskId, stage) {
+  await api(`/api/tasks/${taskId}/signoffs`, {
+    method: "POST",
+    body: JSON.stringify({ stage })
+  });
+  await load();
+  if (state.selectedTaskId) renderDrawer();
+}
 async function requestApproval(taskId) {
   const task = byId(state.data.tasks, taskId);
   await api(`/api/tasks/${taskId}/approvals`, {

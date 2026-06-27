@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureExecutionState, orchestrateTask } from "./orchestrator.js";
+import { EXECUTION_EVENT_TYPES, appendEvent } from "./eventStore.js";
 import { runAgentLlm } from "./providerAdapters.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -83,6 +84,127 @@ const douyinOpsEmployee = {
   currentTaskId: null
 };
 
+
+const governanceTemplates = [
+  {
+    id: "tpl_builder",
+    name: "Builder AI",
+    division: "Engineering",
+    summary: "Implements scoped changes and produces execution artifacts for downstream QA and review.",
+    deliverables: ["Implementation artifact", "Change summary", "Verification notes"],
+    defaultTools: ["repo-read", "repo-write", "artifact-write"]
+  },
+  {
+    id: "tpl_qa",
+    name: "QA AI",
+    division: "Engineering",
+    summary: "Validates behavior against the original requirement by running tests, checking API responses, and recording regressions.",
+    deliverables: ["Test report", "Regression notes", "Reproduction steps"],
+    defaultTools: ["repo-read", "test-runner", "browser-preview", "artifact-write"]
+  },
+  {
+    id: "tpl_product_reviewer",
+    name: "Product AI",
+    division: "Product",
+    summary: "Checks whether the implementation satisfies the user goal, scope, and acceptance criteria before approval.",
+    deliverables: ["Product acceptance report", "Scope gaps", "Decision notes"],
+    defaultTools: ["knowledge", "artifact-write"]
+  },
+  {
+    id: "tpl_release",
+    name: "Release AI",
+    division: "Operations",
+    summary: "Prepares the final release decision, changelog, rollback notes, and completion gate.",
+    deliverables: ["Release notes", "Risk summary", "Go-live checklist"],
+    defaultTools: ["repo-read", "artifact-write"]
+  }
+];
+
+const governanceEmployees = [
+  {
+    id: "emp_builder_ai",
+    templateId: "tpl_builder",
+    displayName: "Builder",
+    title: "AI 开发工程师",
+    teamId: "team_engineering",
+    model: "gpt-5",
+    llmConfig: { provider: "mock", model: "gpt-5", keyRef: "", temperature: 0.2, timeoutMs: 6000, allowMockFallback: true },
+    permission: "Execute With Approval",
+    status: "available",
+    load: 0,
+    currentTaskId: null
+  },
+  {
+    id: "emp_qa_ai",
+    templateId: "tpl_qa",
+    displayName: "QA",
+    title: "AI 测试工程师",
+    teamId: "team_engineering",
+    model: "gpt-5",
+    llmConfig: { provider: "mock", model: "gpt-5", keyRef: "", temperature: 0.1, timeoutMs: 6000, allowMockFallback: true },
+    permission: "Read Only",
+    status: "available",
+    load: 0,
+    currentTaskId: null
+  },
+  {
+    id: "emp_product_ai",
+    templateId: "tpl_product_reviewer",
+    displayName: "Product",
+    title: "AI 产品验收员",
+    teamId: "team_product",
+    model: "gpt-5",
+    llmConfig: { provider: "mock", model: "gpt-5", keyRef: "", temperature: 0.2, timeoutMs: 6000, allowMockFallback: true },
+    permission: "Suggest",
+    status: "available",
+    load: 0,
+    currentTaskId: null
+  },
+  {
+    id: "emp_release_ai",
+    templateId: "tpl_release",
+    displayName: "Release",
+    title: "AI 发布管理员",
+    teamId: "team_growth",
+    model: "gpt-5-mini",
+    llmConfig: { provider: "mock", model: "gpt-5-mini", keyRef: "", temperature: 0.2, timeoutMs: 6000, allowMockFallback: true },
+    permission: "Suggest",
+    status: "available",
+    load: 0,
+    currentTaskId: null
+  }
+];
+
+const governanceStages = {
+  qa: {
+    label: "QA validation",
+    from: "implemented",
+    to: "tested",
+    templateIds: ["tpl_qa"],
+    defaultEmployeeId: "emp_qa_ai"
+  },
+  review: {
+    label: "Independent review",
+    from: "tested",
+    to: "reviewed",
+    templateIds: ["tpl_reviewer"],
+    defaultEmployeeId: "emp_rhea"
+  },
+  product: {
+    label: "Product acceptance",
+    from: "reviewed",
+    to: "approved",
+    templateIds: ["tpl_product_reviewer", "tpl_pm"],
+    defaultEmployeeId: "emp_product_ai"
+  },
+  release: {
+    label: "Release gate",
+    from: "approved",
+    to: "done",
+    templateIds: ["tpl_release"],
+    defaultEmployeeId: "emp_release_ai"
+  }
+};
 const seedState = {
   organization: {
     id: "org_nova",
@@ -428,6 +550,149 @@ function releaseEmployeesFromTask(state, task) {
 
 
 
+function ensureGovernanceState(state) {
+  if (!Array.isArray(state.agentTemplates)) state.agentTemplates = [];
+  if (!Array.isArray(state.employees)) state.employees = [];
+  if (!Array.isArray(state.tasks)) state.tasks = [];
+
+  for (const template of governanceTemplates) {
+    const existingTemplate = state.agentTemplates.find((item) => item.id === template.id);
+    if (existingTemplate) {
+      Object.assign(existingTemplate, template);
+    } else {
+      state.agentTemplates.push({ ...template });
+    }
+  }
+
+  for (const employee of governanceEmployees) {
+    const existingEmployee = state.employees.find((item) => item.id === employee.id);
+    if (!existingEmployee) {
+      state.employees.push({
+        ...employee,
+        llmConfig: { ...employee.llmConfig }
+      });
+      continue;
+    }
+    existingEmployee.templateId = employee.templateId;
+    existingEmployee.title = existingEmployee.title || employee.title;
+    existingEmployee.teamId = existingEmployee.teamId || employee.teamId;
+    existingEmployee.model = existingEmployee.model || employee.model;
+    existingEmployee.llmConfig = existingEmployee.llmConfig || { ...employee.llmConfig };
+    existingEmployee.permission = normalizePermissionValue(existingEmployee.permission || employee.permission);
+    existingEmployee.status = existingEmployee.status || "available";
+    existingEmployee.load = Number.isFinite(Number(existingEmployee.load)) ? Number(existingEmployee.load) : 0;
+    existingEmployee.currentTaskId = existingEmployee.currentTaskId || null;
+  }
+
+  for (const task of state.tasks) {
+    if (!Array.isArray(task.signoffs)) task.signoffs = [];
+  }
+}
+
+function normalizeGovernanceStage(stage) {
+  const value = String(stage || "").trim().toLowerCase();
+  const aliases = {
+    test: "qa",
+    tested: "qa",
+    qa: "qa",
+    reviewer: "review",
+    review: "review",
+    reviewed: "review",
+    product: "product",
+    approval: "product",
+    approved: "product",
+    release: "release",
+    done: "release"
+  };
+  return aliases[value] || "";
+}
+
+function taskLatestBuilderId(state, task) {
+  const artifact = state.artifacts
+    .filter((item) => item.taskId === task.id)
+    .sort((a, b) => String(b.updatedAt || b.timestamp || "").localeCompare(String(a.updatedAt || a.timestamp || "")))[0];
+  return artifact?.createdBy || task.assignedEmployeeIds?.[0] || null;
+}
+
+function findGovernanceEmployee(state, stageConfig, requestedEmployeeId) {
+  if (requestedEmployeeId) return state.employees.find((employee) => employee.id === requestedEmployeeId);
+  if (!stageConfig?.templateIds) return null;
+  return state.employees.find((employee) => employee.id === stageConfig.defaultEmployeeId)
+    || state.employees.find((employee) => stageConfig.templateIds.includes(employee.templateId));
+}
+
+function assertGovernanceSignoffAllowed(state, task, stageKey, employee) {
+  const stageConfig = governanceStages[stageKey];
+  if (!stageConfig) {
+    const error = new Error("Unsupported governance stage");
+    error.status = 400;
+    throw error;
+  }
+  if (task.status !== stageConfig.from) {
+    const error = new Error(`${stageConfig.label} requires task status ${stageConfig.from}; current status is ${task.status}`);
+    error.status = 400;
+    throw error;
+  }
+  if (!employee) {
+    const error = new Error(`No AI employee available for ${stageConfig.label}`);
+    error.status = 400;
+    throw error;
+  }
+  if (!stageConfig.templateIds.includes(employee.templateId)) {
+    const error = new Error(`${employee.displayName} cannot sign ${stageConfig.label}`);
+    error.status = 403;
+    throw error;
+  }
+  if (task.signoffs.some((signoff) => signoff.stage === stageKey && signoff.status === "passed")) {
+    const error = new Error(`${stageConfig.label} has already been signed`);
+    error.status = 400;
+    throw error;
+  }
+  const builderId = taskLatestBuilderId(state, task);
+  if (builderId && employee.id === builderId) {
+    const error = new Error("The builder cannot sign their own downstream governance gate");
+    error.status = 403;
+    throw error;
+  }
+}
+
+function createTaskSignoff(state, task, stageKey, employee, body) {
+  const stageConfig = governanceStages[stageKey];
+  const statusFrom = task.status;
+  const signoff = {
+    id: id("sig"),
+    taskId: task.id,
+    stage: stageKey,
+    stageLabel: stageConfig.label,
+    employeeId: employee.id,
+    status: body.status === "failed" ? "failed" : "passed",
+    note: String(body.note || ""),
+    createdAt: now()
+  };
+  task.signoffs.push(signoff);
+  if (signoff.status === "passed") {
+    task.status = stageConfig.to;
+    if (task.status === "done") releaseEmployeesFromTask(state, task);
+  }
+  appendEvent(state, id, now, {
+    type: EXECUTION_EVENT_TYPES.TASK_SIGNED_OFF,
+    taskId: task.id,
+    agentId: employee.id,
+    payload: {
+      signoff,
+      statusFrom,
+      statusTo: task.status
+    }
+  });
+  addLog(state, {
+    actorType: "agent",
+    actorId: employee.id,
+    event: "signed_task_gate",
+    targetId: task.id,
+    detail: `${stageConfig.label}: ${signoff.status}, ${statusFrom} -> ${task.status}`
+  });
+  return signoff;
+}
 function ensureChatState(state) {
   if (!Array.isArray(state.chatRooms)) state.chatRooms = [];
   if (!Array.isArray(state.chatMessages)) state.chatMessages = [];
@@ -834,6 +1099,7 @@ async function handleApi(req, res, url) {
   const state = await loadState();
   const pathname = url.pathname;
   ensureBusinessSkillState(state);
+  ensureGovernanceState(state);
 
   if (req.method === "GET" && pathname === "/api/state") {
     ensureChatState(state);
@@ -876,7 +1142,17 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const task = state.tasks.find((item) => item.id === taskStatusMatch[1]);
     if (!task) return notFound(res);
-    task.status = body.status || task.status;
+    const nextStatus = String(body.status || task.status);
+    const allowedStatuses = new Set(["todo", "running", "implemented", "tested", "reviewed", "approved", "waiting_approval", "review", "done"]);
+    if (!allowedStatuses.has(nextStatus)) {
+      sendJson(res, 400, { error: `Unsupported task status: ${nextStatus}` });
+      return;
+    }
+    if (nextStatus === "done" && task.status !== "done") {
+      sendJson(res, 400, { error: "Task must pass the release signoff before done" });
+      return;
+    }
+    task.status = nextStatus;
     if (task.status === "running") {
       assignEmployeesToTask(state, task, task.assignedEmployeeIds, 8);
     }
@@ -892,6 +1168,28 @@ async function handleApi(req, res, url) {
     });
     await saveState(state);
     sendJson(res, 200, task);
+    return;
+  }
+
+
+  const taskSignoffMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/signoffs$/);
+  if (req.method === "POST" && taskSignoffMatch) {
+    const body = await readBody(req);
+    ensureRuntimeState(state);
+    const task = state.tasks.find((item) => item.id === taskSignoffMatch[1]);
+    if (!task) return notFound(res);
+    if (!Array.isArray(task.signoffs)) task.signoffs = [];
+    const stageKey = normalizeGovernanceStage(body.stage);
+    const stageConfig = governanceStages[stageKey];
+    const employee = findGovernanceEmployee(state, stageConfig || {}, body.employeeId);
+    try {
+      assertGovernanceSignoffAllowed(state, task, stageKey, employee);
+      const signoff = createTaskSignoff(state, task, stageKey, employee, body);
+      await saveState(state);
+      sendJson(res, 201, { task, signoff });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message || "Task signoff failed" });
+    }
     return;
   }
 
