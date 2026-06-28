@@ -24,7 +24,9 @@ import type {
   LlmResult,
   Project,
   RuntimeError,
-  Task
+  Task,
+  TaskSignoff,
+  ToolInvocation
 } from "./types.js";
 
 interface TaskSnapshot extends Record<string, unknown> {
@@ -306,6 +308,105 @@ function buildFailedExecutionTrace(
   };
 }
 
+function ensureTaskSignoffs(task: Task): TaskSignoff[] {
+  if (!Array.isArray(task.signoffs)) task.signoffs = [];
+  return task.signoffs;
+}
+
+function selectQaEmployee(state: AppState, builder: Employee): Employee | undefined {
+  return state.employees.find((employee) => employee.id === "emp_qa_ai" && employee.id !== builder.id)
+    || state.employees.find((employee) => employee.templateId === "tpl_qa" && employee.id !== builder.id)
+    || state.employees.find((employee) => /qa|test|\u6d4b\u8bd5/i.test([employee.displayName, employee.title].join(" ")) && employee.id !== builder.id);
+}
+
+function buildQaEvidence(artifact: Artifact, toolInvocations: ToolInvocation[]): Record<string, unknown> {
+  const content = String(artifact.content || "");
+  const failedToolInvocations = toolInvocations.filter((invocation) => invocation.status === "failed");
+  return {
+    artifactId: artifact.id,
+    artifactType: artifact.type || "unknown",
+    contentBytes: Buffer.byteLength(content, "utf8"),
+    hasSummary: Boolean(String(artifact.summary || "").trim()),
+    toolInvocationIds: toolInvocations.map((invocation) => invocation.id),
+    failedToolInvocationIds: failedToolInvocations.map((invocation) => invocation.id)
+  };
+}
+
+function createAutomaticQaSignoff({
+  state,
+  task,
+  builder,
+  artifact,
+  toolInvocations,
+  createId,
+  now,
+  orchestrationId,
+  executionTraceId
+}: {
+  state: AppState;
+  task: Task;
+  builder: Employee;
+  artifact: Artifact;
+  toolInvocations: ToolInvocation[];
+  createId: IdFactory;
+  now: Clock;
+  orchestrationId: string;
+  executionTraceId: string;
+}): TaskSignoff | null {
+  const qaEmployee = selectQaEmployee(state, builder);
+  if (!qaEmployee) return null;
+
+  const signoffs = ensureTaskSignoffs(task);
+  const statusFrom = task.status;
+  const evidence = buildQaEvidence(artifact, toolInvocations);
+  const contentBytes = Number(evidence.contentBytes || 0);
+  const failedToolCount = Array.isArray(evidence.failedToolInvocationIds) ? evidence.failedToolInvocationIds.length : 0;
+  const passed = contentBytes > 0 && failedToolCount === 0;
+  const signoff: TaskSignoff = {
+    id: createId("sig"),
+    taskId: task.id,
+    stage: "qa",
+    stageLabel: "QA validation",
+    employeeId: qaEmployee.id,
+    status: passed ? "passed" : "failed",
+    note: passed
+      ? "\u81ea\u52a8 QA \u901a\u8fc7\uff1a\u4ea4\u4ed8\u7269\u5df2\u751f\u6210\uff0c\u5de5\u5177\u8c03\u7528\u65e0\u5931\u8d25\u3002"
+      : "\u81ea\u52a8 QA \u672a\u901a\u8fc7\uff1a\u4ea4\u4ed8\u7269\u4e3a\u7a7a\u6216\u5de5\u5177\u8c03\u7528\u5931\u8d25\uff0c\u9700\u8981\u4fee\u590d\u540e\u91cd\u8bd5\u3002",
+    createdAt: now(),
+    artifactId: artifact.id,
+    automatic: true,
+    evidence
+  };
+
+  signoffs.push(signoff);
+  task.status = passed ? "tested" : "implemented";
+  emitEvent(state, createId, now, {
+    type: EXECUTION_EVENT_TYPES.TASK_SIGNED_OFF,
+    orchestrationId,
+    taskId: task.id,
+    agentId: qaEmployee.id,
+    artifactId: artifact.id,
+    executionTraceId,
+    payload: {
+      signoff,
+      statusFrom,
+      statusTo: task.status,
+      automatic: true
+    }
+  });
+
+  state.auditLogs.unshift({
+    id: createId("log"),
+    actorType: "agent",
+    actorId: qaEmployee.id,
+    event: "auto_qa_signoff",
+    targetId: task.id,
+    detail: "Auto QA: " + signoff.status + ", " + statusFrom + " -> " + task.status,
+    createdAt: now()
+  });
+  return signoff;
+}
+
 function emitLlmCalled(
   state: AppState,
   createId: IdFactory,
@@ -442,6 +543,26 @@ export async function orchestrateTask(state: AppState, taskId: string, options: 
       count: toolInvocations.length
     });
 
+    startRunStep(state, executionRun, createId, now, "qa_signoff", {
+      artifactId: artifact.id,
+      toolInvocationIds: toolInvocations.map((invocation) => invocation.id)
+    });
+    const qaSignoff = createAutomaticQaSignoff({
+      state,
+      task,
+      builder: agent,
+      artifact,
+      toolInvocations,
+      createId,
+      now,
+      orchestrationId,
+      executionTraceId: executionTrace.id
+    });
+    completeRunStep(state, executionRun, createId, now, "qa_signoff", {
+      signoffId: qaSignoff?.id || null,
+      status: qaSignoff?.status || "skipped"
+    });
+
     startRunStep(state, executionRun, createId, now, "persist_events", {
       artifactId: artifact.id,
       executionTraceId: executionTrace.id
@@ -456,7 +577,8 @@ export async function orchestrateTask(state: AppState, taskId: string, options: 
       payload: {
         artifactId: artifact.id,
         executionTraceId: executionTrace.id,
-        toolInvocationIds: Array.isArray(artifact.toolInvocations) ? artifact.toolInvocations.map((invocation) => invocation.id) : []
+        toolInvocationIds: Array.isArray(artifact.toolInvocations) ? artifact.toolInvocations.map((invocation) => invocation.id) : [],
+        qaSignoffId: qaSignoff?.id || null
       }
     });
     completeRunStep(state, executionRun, createId, now, "persist_events", {

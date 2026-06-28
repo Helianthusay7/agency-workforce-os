@@ -70,6 +70,7 @@ export interface Task {
   assignedEmployeeIds: string[];
   dueDate?: string;
   parentTaskId?: string | null;
+  signoffs?: TaskSignoff[];
   [key: string]: unknown;
 }
 
@@ -130,6 +131,20 @@ export interface ToolInvocation {
   startedAt: string;
   completedAt: string | null;
   durationMs: number | null;
+}
+
+export interface TaskSignoff {
+  id: string;
+  taskId: string;
+  stage: "qa" | "review" | "product" | "release" | string;
+  stageLabel: string;
+  employeeId: string;
+  status: "passed" | "failed" | string;
+  note: string;
+  createdAt: string;
+  artifactId?: string;
+  automatic?: boolean;
+  evidence?: Record<string, unknown>;
 }
 
 export interface ExecutionRun {
