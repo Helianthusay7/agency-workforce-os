@@ -5,3 +5,5 @@ vendor/agency-agents/
 data/state.backup-*.json
 dist/
 public/app.js
+data/state.local.json
+data/state.*.local.json

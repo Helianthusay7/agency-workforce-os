@@ -14,11 +14,22 @@ const __dirname = path.dirname(__filename);
 const appRoot = existsSync(path.join(__dirname, "public")) ? __dirname : path.resolve(__dirname, "..");
 const publicDir = path.join(appRoot, "public");
 const dataDir = path.join(appRoot, "data");
-const stateFile = path.join(dataDir, "state.json");
+const seedStateFile = path.join(dataDir, "state.json");
+const stateFile = path.resolve(process.env.AGENCY_STATE_FILE || path.join(dataDir, "state.local.json"));
 const port = Number(process.env.PORT || 4173);
+const host = process.env.AGENCY_HOST || "127.0.0.1";
+const localOnlyHost = host === "127.0.0.1" || host === "localhost" || host === "::1";
 const maxJsonBodyBytes = Number(process.env.AGENCY_MAX_BODY_BYTES || 2 * 1024 * 1024);
 const apiToken = process.env.AGENCY_API_TOKEN || "";
-const authSecret = process.env.AGENCY_AUTH_SECRET || apiToken || "local-development-secret-change-me";
+const localDevAuthSecret = localOnlyHost ? apiToken || "local-development-secret-change-me" : "";
+const authSecret = process.env.AGENCY_AUTH_SECRET || localDevAuthSecret;
+if (!authSecret) {
+    throw new Error("AGENCY_AUTH_SECRET is required when AGENCY_HOST is not local-only");
+}
+const trustProxy = process.env.AGENCY_TRUST_PROXY === "true";
+const forceSecureCookie = process.env.AGENCY_COOKIE_SECURE === "true";
+const authRateWindowMs = Number(process.env.AGENCY_AUTH_RATE_WINDOW_MS || 15 * 60 * 1000);
+const authRateMaxAttempts = Number(process.env.AGENCY_AUTH_RATE_MAX_ATTEMPTS || 20);
 const sessionCookieName = "agency_session";
 const sessionMaxAgeSeconds = Number(process.env.AGENCY_SESSION_MAX_AGE_SECONDS || 60 * 60 * 24 * 14);
 const encryptionKey = createHash("sha256").update(authSecret).digest();
@@ -634,8 +645,13 @@ function sessionUser(req, state) {
     if (!userId || !Array.isArray(state.users)) return null;
     return state.users.find((user) => user.id === userId && user.status !== "disabled") || null;
 }
+function requestIsSecure(req) {
+    return Boolean(req.socket.encrypted)
+        || forceSecureCookie
+        || (trustProxy && String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim().toLowerCase() === "https");
+}
 function sessionCookie(token, req) {
-    const secure = req.socket.encrypted ? "; Secure" : "";
+    const secure = requestIsSecure(req) ? "; Secure" : "";
     return sessionCookieName + "=" + encodeURIComponent(token) + "; HttpOnly; SameSite=Lax; Path=/; Max-Age=" + sessionMaxAgeSeconds + secure;
 }
 function clearSessionCookie() {
@@ -652,6 +668,29 @@ function sendJsonWithHeaders(res, status, payload, headers = {}) {
 }
 function normalizeEmail(value) {
     return String(value || "").trim().toLowerCase();
+}
+const authRateLimits = new Map();
+function clientIp(req) {
+    if (trustProxy) {
+        const forwardedFor = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+        if (forwardedFor) return forwardedFor;
+    }
+    return req.socket.remoteAddress || "unknown";
+}
+function assertAuthRateLimit(req, email) {
+    const key = clientIp(req) + ":" + normalizeEmail(email);
+    const nowMs = Date.now();
+    const existing = authRateLimits.get(key);
+    if (!existing || existing.resetAt <= nowMs) {
+        authRateLimits.set(key, { count: 1, resetAt: nowMs + authRateWindowMs });
+        return;
+    }
+    existing.count += 1;
+    if (existing.count > authRateMaxAttempts) {
+        const error = new Error("Too many login attempts. Try again later.");
+        error.status = 429;
+        throw error;
+    }
 }
 function hashPassword(password) {
     const salt = randomBytes(16).toString("base64url");
@@ -941,9 +980,16 @@ async function handleAuthApi(req, res, pathname, state) {
             sendJson(res, 400, { error: "Email and password with at least 8 characters are required" });
             return true;
         }
+        try {
+            assertAuthRateLimit(req, email);
+        }
+        catch (error) {
+            sendJson(res, error.status || 429, { error: error.message || "Too many login attempts" });
+            return true;
+        }
         let user = state.users.find((item) => normalizeEmail(item.email) === email);
         if (pathname === "/api/auth/register") {
-            if (user && user.passwordHash) {
+            if (user) {
                 sendJson(res, 409, { error: "This email is already registered" });
                 return true;
             }
@@ -2037,6 +2083,10 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, error.status || 500, { error: error.message || "Server error" });
     }
 });
-server.listen(port, "127.0.0.1", () => {
-    console.log(`Agency Team Workstation running at http://127.0.0.1:${port}`);
+server.listen(port, host, () => {
+    console.log(`Agency Team Workstation running at http://${host}:${port}`);
+    console.log(`Runtime state file: ${stateFile}`);
+    if (!process.env.AGENCY_AUTH_SECRET) {
+        console.warn("Using local-development auth secret. Set AGENCY_AUTH_SECRET before exposing this service.");
+    }
 });
