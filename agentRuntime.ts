@@ -7,7 +7,7 @@ type ParsedJson = Record<string, unknown>;
 export interface RuntimeParsedOutput {
   type: string;
   content: string;
-  meta: {
+  meta: Record<string, unknown> & {
     agentId: string;
     taskId: string;
   };
@@ -99,6 +99,7 @@ function normalizeStructuredOutput(
     type: typeof parsed.type === "string" && ARTIFACT_TYPES.has(parsed.type) ? parsed.type : fallbackType,
     content,
     meta: {
+      ...meta,
       agentId: String(meta.agentId || agent.id),
       taskId: String(meta.taskId || task.id)
     },
@@ -135,7 +136,8 @@ export function buildRuntimePrompt({ task, agent, template, project }: {
     '  "content": "complete deliverable content",',
     '  "meta": {',
     `    "agentId": "${agent.id}",`,
-    `    "taskId": "${task.id}"`,
+    `    "taskId": "${task.id}",`,
+    '    "toolActions": [{ "toolName": "filesystem.writeArtifact", "targetPath": "D:/allowed/root/file.html" }]',
     "  },",
     '  "summary": "short result summary",',
     '  "deliverables": ["concrete outputs produced"],',
@@ -159,7 +161,8 @@ export function buildRuntimePrompt({ task, agent, template, project }: {
     `Expected deliverables: ${(template?.deliverables || []).join(", ") || "general result"}`,
     `Tools: ${(template?.defaultTools || []).join(", ") || "none declared"}`,
     "",
-    "Execute the task. Produce a structured artifact that can be stored and reviewed."
+    "Execute the task. Produce a structured artifact that can be stored and reviewed.",
+    "Only include meta.toolActions when the task explicitly requires a workstation tool action. Tool actions require human approval before execution."
   ].join("\n");
 }
 

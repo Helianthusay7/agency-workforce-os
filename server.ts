@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { ensureExecutionState, orchestrateTask } from "./orchestrator.js";
 import { EXECUTION_EVENT_TYPES, appendEvent } from "./eventStore.js";
 import { runAgentLlm } from "./providerAdapters.js";
+import { executeApprovedToolInvocation, rejectToolInvocation } from "./toolGateway.js";
 import { aiEmployeeTitleForTemplate, localizeTemplateName } from "./templateLocalization.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +16,8 @@ const dataDir = path.join(appRoot, "data");
 const stateFile = path.join(dataDir, "state.json");
 const port = Number(process.env.PORT || 4173);
 const maxJsonBodyBytes = Number(process.env.AGENCY_MAX_BODY_BYTES || 2 * 1024 * 1024);
+const apiToken = process.env.AGENCY_API_TOKEN || "";
+const allowedOrigins = new Set((process.env.AGENCY_ALLOWED_ORIGINS || "").split(",").map((item) => item.trim()).filter(Boolean));
 const now = () => new Date().toISOString();
 const id = (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
 const DEFAULT_LLM_MODEL = "gpt-5.4-mini";
@@ -551,6 +554,55 @@ async function readBody(req) {
         err.status = 400;
         throw err;
     }
+}
+function apiError(message, status) {
+    const error = new Error(message);
+    error.status = status;
+    return error;
+}
+
+function bearerToken(req) {
+    const header = String(req.headers.authorization || "");
+    const match = header.match(/^Bearer\s+(.+)$/i);
+    return match?.[1] || String(req.headers["x-agency-token"] || "");
+}
+
+function isLocalRequest(req) {
+    const remote = req.socket.remoteAddress || "";
+    return remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+}
+
+function originAllowed(req) {
+    const origin = String(req.headers.origin || "");
+    if (!origin) return true;
+    if (allowedOrigins.has(origin)) return true;
+    const host = String(req.headers.host || "");
+    return Boolean(host) && (origin === "http://" + host || origin === "https://" + host);
+}
+
+function assertApiAccess(req) {
+    if (apiToken) {
+        if (bearerToken(req) !== apiToken) throw apiError("Unauthorized", 401);
+    } else if (!isLocalRequest(req)) {
+        throw apiError("AGENCY_API_TOKEN is required for non-local API access", 401);
+    }
+    if (isMutatingApiRequest(req) && !originAllowed(req)) {
+        throw apiError("Origin is not allowed", 403);
+    }
+}
+
+function sendNoContent(res, req) {
+    const origin = String(req.headers.origin || "");
+    const headers = {
+        "cache-control": "no-store"
+    };
+    if (origin && originAllowed(req)) {
+        headers["access-control-allow-origin"] = origin;
+        headers["access-control-allow-headers"] = "content-type, authorization, x-agency-token";
+        headers["access-control-allow-methods"] = "GET, POST, PATCH, OPTIONS";
+    }
+    res.writeHead(204, headers);
+    res.end();
 }
 function addLog(state, entry) {
     state.auditLogs.unshift({
@@ -1250,6 +1302,12 @@ function normalizePermissionValue(permission) {
     return aliases[value] || "Suggest";
 }
 async function handleApi(req, res, url) {
+    if (req.method === "OPTIONS") {
+        if (!originAllowed(req)) throw apiError("Origin is not allowed", 403);
+        sendNoContent(res, req);
+        return;
+    }
+    assertApiAccess(req);
     if (isMutatingApiRequest(req)) {
         return enqueueStateMutation(() => handleApiUnlocked(req, res, url));
     }
@@ -1453,8 +1511,14 @@ async function handleApiUnlocked(req, res, url) {
         approval.resolvedAt = now();
         approval.resolutionNote = String(body.note || "");
         const approvalTask = state.tasks.find((task) => task.id === approval.taskId);
-        if (approvalTask && approvalTask.status === "waiting_approval" && approval.status === "approved") {
+        if (!approval.toolInvocationId && approvalTask && approvalTask.status === "waiting_approval" && approval.status === "approved") {
             approvalTask.status = "todo";
+        }
+        let toolInvocation = null;
+        if (approval.toolInvocationId) {
+            toolInvocation = approval.status === "approved"
+                ? await executeApprovedToolInvocation({ state, approvalId: approval.id, createId: id, now })
+                : rejectToolInvocation(state, approval.id, now);
         }
         addLog(state, {
             actorType: "user",
@@ -1464,7 +1528,7 @@ async function handleApiUnlocked(req, res, url) {
             detail: `${approval.title}：${approval.status}`
         });
         await saveState(state);
-        sendJson(res, 200, approval);
+        sendJson(res, 200, toolInvocation ? { approval, toolInvocation } : approval);
         return;
     }
     const taskApprovalMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/approvals$/);

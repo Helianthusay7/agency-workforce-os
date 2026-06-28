@@ -121,7 +121,7 @@ export interface ExecutionStep {
 export interface ToolInvocation {
   id: string;
   toolName: string;
-  status: "running" | "succeeded" | "failed";
+  status: "waiting_approval" | "running" | "succeeded" | "failed";
   taskId: string;
   agentId: string;
   artifactId: string;
