@@ -861,6 +861,54 @@ function findOwnedApproval(state, userId, approvalId) {
     const taskIds = taskIdsForUser(state, userId);
     return (state.approvals || []).find((approval) => approval.id === approvalId && (taskIds.has(approval.taskId) || approval.reviewerUserId === userId));
 }
+function deleteOwnedTaskTree(state, userId, rootTaskId) {
+    const owned = new Set(ownedTasks(state, userId).map((task) => task.id));
+    if (!owned.has(rootTaskId))
+        return null;
+    const deleteTaskIds = new Set([rootTaskId]);
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const task of state.tasks || []) {
+            if (owned.has(task.id) && task.parentTaskId && deleteTaskIds.has(task.parentTaskId) && !deleteTaskIds.has(task.id)) {
+                deleteTaskIds.add(task.id);
+                changed = true;
+            }
+        }
+    }
+    const artifactIds = new Set((state.artifacts || []).filter((item) => deleteTaskIds.has(item.taskId)).map((item) => item.id));
+    const approvalIds = new Set((state.approvals || []).filter((item) => deleteTaskIds.has(item.taskId)).map((item) => item.id));
+    const roomIds = new Set((state.chatRooms || []).filter((item) => deleteTaskIds.has(item.taskId)).map((item) => item.id));
+    const traceIds = new Set((state.executionTraces || []).filter((item) => deleteTaskIds.has(item.taskId)).map((item) => item.id));
+    const runIds = new Set((state.executionRuns || []).filter((item) => deleteTaskIds.has(item.taskId)).map((item) => item.id));
+
+    state.tasks = (state.tasks || []).filter((item) => !deleteTaskIds.has(item.id));
+    state.artifacts = (state.artifacts || []).filter((item) => !artifactIds.has(item.id));
+    state.approvals = (state.approvals || []).filter((item) => !approvalIds.has(item.id));
+    state.chatRooms = (state.chatRooms || []).filter((item) => !roomIds.has(item.id));
+    state.chatMessages = (state.chatMessages || []).filter((item) => !deleteTaskIds.has(item.taskId) && !roomIds.has(item.roomId));
+    state.executionTraces = (state.executionTraces || []).filter((item) => !traceIds.has(item.id));
+    state.executionRuns = (state.executionRuns || []).filter((item) => !runIds.has(item.id));
+    state.toolInvocations = (state.toolInvocations || []).filter((item) => !deleteTaskIds.has(item.taskId));
+    state.events = (state.events || []).filter((item) => !deleteTaskIds.has(item.taskId) && !artifactIds.has(item.artifactId) && !traceIds.has(item.executionTraceId));
+    state.auditLogs = (state.auditLogs || []).filter((item) => {
+        return !deleteTaskIds.has(item.targetId) && !artifactIds.has(item.targetId) && !approvalIds.has(item.targetId);
+    });
+    for (const employee of ownedEmployees(state, userId)) {
+        if (employee.currentTaskId && deleteTaskIds.has(employee.currentTaskId)) {
+            employee.currentTaskId = null;
+            employee.status = "available";
+            employee.load = 0;
+        }
+    }
+    return {
+        taskIds: [...deleteTaskIds],
+        artifactIds: [...artifactIds],
+        approvalIds: [...approvalIds],
+        traceIds: [...traceIds],
+        runIds: [...runIds]
+    };
+}
 function ensureAuthState(state) {
     if (!Array.isArray(state.users)) state.users = [];
     if (!state.users.length) {
@@ -1599,6 +1647,23 @@ async function handleApiUnlocked(req, res, url) {
         }
         await saveState(state);
         sendJson(res, 201, task);
+        return;
+    }
+    const taskDeleteMatch = pathname.match(/^\/api\/tasks\/([^/]+)$/);
+    if (req.method === "DELETE" && taskDeleteMatch) {
+        const deleted = deleteOwnedTaskTree(state, currentUserId, taskDeleteMatch[1]);
+        if (!deleted)
+            return notFound(res);
+        addLog(state, {
+            actorType: "user",
+            actorId: currentUserId,
+            ownerUserId: currentUserId,
+            event: "deleted_task",
+            targetId: taskDeleteMatch[1],
+            detail: "删除任务：" + deleted.taskIds.join(", ")
+        });
+        await saveState(state);
+        sendJson(res, 200, { deleted });
         return;
     }
     const taskStatusMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/status$/);

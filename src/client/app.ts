@@ -996,6 +996,7 @@ function renderWorkPanel() {
         </select>
       </label>
       <button class="primary-button" type="button" data-work-run="${task.id}" ${employee ? "" : "disabled"}>让该员工执行</button>
+      <button class="secondary-button" type="button" data-work-delete="${task.id}">删除任务</button>
       <button class="secondary-button" type="button" data-work-refresh>刷新</button>
     </div>
 
@@ -1336,6 +1337,24 @@ async function signoffTask(taskId, stage) {
   await load();
   if (state.selectedTaskId) renderDrawer();
 }
+async function deleteTask(taskId) {
+  const task = byId(state.data.tasks, taskId);
+  const title = task?.title || taskId;
+  if (!window.confirm(`删除任务「${title}」？相关子任务、产物、执行记录和审批也会一起删除。`)) return;
+  await api(`/api/tasks/${taskId}`, {
+    method: "DELETE"
+  });
+  if (state.selectedTaskId === taskId) {
+    closeDrawer();
+    state.selectedTaskId = null;
+  }
+  if (state.selectedWorkTaskId === taskId) {
+    state.selectedWorkTaskId = null;
+    state.selectedWorkEmployeeId = null;
+  }
+  await load();
+  notify("任务已删除", "success");
+}
 function bindEvents() {
   document.getElementById("auth-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1566,8 +1585,10 @@ function bindEvents() {
     const doneTask = target.dataset.doneTask;
     const signoffTaskId = target.dataset.signoffTask;
     const signoffStage = target.dataset.signoffStage;
+    const deleteTaskId = target.dataset.deleteTask;
     const editEmployeeId = target.dataset.editEmployee;
     const workRunTask = target.dataset.workRun;
+    const workDeleteTask = target.dataset.workDelete;
     const workRefresh = target.dataset.workRefresh !== undefined;
     const approveId = target.dataset.approve;
     const rejectId = target.dataset.reject;
@@ -1578,6 +1599,7 @@ function bindEvents() {
     if (runTask) await updateTaskStatus(runTask, "running");
     if (doneTask) await updateTaskStatus(doneTask, "done");
     if (signoffTaskId) await signoffTask(signoffTaskId, signoffStage);
+    if (deleteTaskId) await deleteTask(deleteTaskId);
     if (editEmployeeId) {
       state.editingEmployeeId = state.editingEmployeeId === editEmployeeId ? null : editEmployeeId;
       renderEmployees();
