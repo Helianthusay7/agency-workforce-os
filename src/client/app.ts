@@ -10,10 +10,22 @@ const state = {
   notificationTimer: null
 };
 
+function showAuthScreen(message = "") {
+  document.getElementById("auth-screen")?.removeAttribute("hidden");
+  document.querySelector(".app-shell")?.setAttribute("hidden", "");
+  const status = document.getElementById("auth-status");
+  if (status) status.textContent = message;
+}
+function hideAuthScreen() {
+  document.getElementById("auth-screen")?.setAttribute("hidden", "");
+  document.querySelector(".app-shell")?.removeAttribute("hidden");
+}
+
 const $ = (selector) => document.querySelector(selector);
-const api = async (url, options = {}) => {
+const api = async (url: string, options: RequestInit = {}) => {
   const response = await fetch(url, {
-    headers: { "content-type": "application/json" },
+    credentials: "same-origin",
+    headers: { "content-type": "application/json", ...(options.headers || {}) },
     ...options
   });
   if (!response.ok) throw new Error((await response.json()).error || "Request failed");
@@ -776,6 +788,11 @@ function renderTemplates() {
 function renderChrome() {
   $("#org-name").textContent = state.data.organization.name;
   $("#org-plan").textContent = state.data.organization.plan;
+  const currentUser = state.data.currentUser;
+  const userLabel = $("#current-user-label");
+  if (userLabel) userLabel.textContent = currentUser ? currentUser.email : "";
+  const apiLabel = $("#api-config-label");
+  if (apiLabel) apiLabel.textContent = currentUser?.llmConfig?.apiKeyConfigured ? "API set" : "API missing";
 
   $("#metric-active-tasks").textContent = state.data.dashboard.activeTasks;
   $("#metric-approvals").textContent = state.data.dashboard.pendingApprovals;
@@ -987,9 +1004,60 @@ function render() {
   renderView();
 }
 
+async function submitAuthForm(formElement) {
+  const form = new FormData(formElement);
+  const mode = form.get("mode") || "login";
+  const status = document.getElementById("auth-status");
+  if (status) status.textContent = "Working...";
+  try {
+    await api(mode === "register" ? "/api/auth/register" : "/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({
+        name: form.get("name"),
+        email: form.get("email"),
+        password: form.get("password")
+      })
+    });
+    hideAuthScreen();
+    await load();
+  } catch (error) {
+    if (status) status.textContent = error.message || "Auth failed";
+  }
+}
+async function logout() {
+  await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
+  state.data = null;
+  showAuthScreen("Signed out");
+}
+function setNamedFormValue(form, name, value) {
+  const field = form.querySelector("[name=\"" + name + "\"]");
+  if (field instanceof HTMLInputElement || field instanceof HTMLSelectElement) {
+    field.value = String(value ?? "");
+  }
+}
+function fillApiSettingsForm() {
+  const form = document.getElementById("api-settings-form");
+  const config = state.data?.currentUser?.llmConfig || {};
+  if (!(form instanceof HTMLFormElement)) return;
+  setNamedFormValue(form, "provider", config.provider || "openai-compatible");
+  setNamedFormValue(form, "model", config.model || "gpt-5.4-mini");
+  setNamedFormValue(form, "baseUrl", config.baseUrl || "");
+  setNamedFormValue(form, "timeoutMs", config.timeoutMs || 30000);
+  setNamedFormValue(form, "temperature", config.temperature ?? 0.2);
+  setNamedFormValue(form, "apiKey", "");
+}
 async function load() {
-  state.data = await api("/api/state");
-  render();
+  try {
+    state.data = await api("/api/state");
+    hideAuthScreen();
+    render();
+  } catch (error) {
+    if (String(error.message || "").toLowerCase().includes("login")) {
+      showAuthScreen("Please log in or create an account.");
+      return;
+    }
+    throw error;
+  }
 }
 
 
@@ -1062,6 +1130,47 @@ async function signoffTask(taskId, stage) {
   if (state.selectedTaskId) renderDrawer();
 }
 function bindEvents() {
+  document.getElementById("auth-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (event.currentTarget instanceof HTMLFormElement) await submitAuthForm(event.currentTarget);
+  });
+  document.querySelectorAll("[data-auth-mode]").forEach((button) => {
+    if (!(button instanceof HTMLElement)) return;
+    button.addEventListener("click", () => {
+      const form = document.getElementById("auth-form");
+      if (!(form instanceof HTMLFormElement)) return;
+      const modeInput = form.elements.namedItem("mode");
+      if (modeInput instanceof HTMLInputElement) modeInput.value = button.dataset.authMode || "login";
+      document.querySelectorAll("[data-auth-mode]").forEach((item) => item.classList.toggle("active", item === button));
+      const nameLabel = document.getElementById("auth-name-label");
+      if (nameLabel instanceof HTMLElement) nameLabel.hidden = modeInput instanceof HTMLInputElement && modeInput.value !== "register";
+    });
+  });
+  document.getElementById("logout-btn")?.addEventListener("click", logout);
+  document.getElementById("open-api-settings")?.addEventListener("click", () => {
+    fillApiSettingsForm();
+    const modal = document.getElementById("api-settings-modal");
+    if (modal instanceof HTMLDialogElement) modal.showModal();
+  });
+  document.getElementById("api-settings-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!(event.currentTarget instanceof HTMLFormElement)) return;
+    const form = new FormData(event.currentTarget);
+    await api("/api/me/llm-config", {
+      method: "PATCH",
+      body: JSON.stringify({
+        provider: form.get("provider"),
+        model: form.get("model"),
+        baseUrl: form.get("baseUrl"),
+        apiKey: form.get("apiKey"),
+        timeoutMs: Number(form.get("timeoutMs") || 0) || undefined,
+        temperature: form.get("temperature") === "" ? undefined : Number(form.get("temperature"))
+      })
+    });
+    const modal = document.getElementById("api-settings-modal");
+    if (modal instanceof HTMLDialogElement) modal.close();
+    await load();
+  });
   $("#refresh-btn").addEventListener("click", load);
 
   document.querySelectorAll(".nav-item").forEach((item) => {

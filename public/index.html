@@ -7,6 +7,21 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <section id="auth-screen" class="auth-screen" hidden>
+      <form id="auth-form" class="auth-card">
+        <div class="auth-tabs">
+          <button type="button" class="secondary-button active" data-auth-mode="login">Login</button>
+          <button type="button" class="secondary-button" data-auth-mode="register">Register</button>
+        </div>
+        <input type="hidden" name="mode" value="login" />
+        <h1>AI Workforce OS</h1>
+        <label id="auth-name-label" hidden>Name<input name="name" maxlength="40" /></label>
+        <label>Email<input name="email" type="email" required autocomplete="email" /></label>
+        <label>Password<input name="password" type="password" required minlength="8" autocomplete="current-password" /></label>
+        <p id="auth-status" class="auth-status" aria-live="polite"></p>
+        <button class="primary-button" type="submit">Continue</button>
+      </form>
+    </section>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -49,6 +64,10 @@
             <h1>执行控制台</h1>
           </div>
           <div class="topbar-actions">
+            <span id="current-user-label" class="topbar-user"></span>
+            <span id="api-config-label" class="pill"></span>
+            <button id="open-api-settings" class="secondary-button" type="button">My API</button>
+            <button id="logout-btn" class="secondary-button" type="button">Logout</button>
             <button id="refresh-btn" class="icon-button" title="刷新">↻</button>
             <button id="open-task-modal" class="primary-button">新建任务</button>
           </div>
@@ -318,6 +337,24 @@
         <div class="modal-actions">
           <button class="secondary-button" type="button" data-close-modal>取消</button>
           <button class="primary-button" type="submit">添加</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="api-settings-modal" class="modal">
+      <form id="api-settings-form">
+        <div class="modal-header">
+          <h2>My API</h2>
+          <button class="icon-button" type="button" data-close-modal title="Close">x</button>
+        </div>
+        <label>Provider<select name="provider"><option value="openai-compatible" selected>openai-compatible</option><option value="openai">openai</option><option value="mock">mock</option></select></label>
+        <label>Model<input name="model" list="model-presets" value="gpt-5.4-mini" /></label>
+        <label>Base URL<input name="baseUrl" placeholder="https://api.lmm.best:9000/v1" /></label>
+        <label>API Key<input name="apiKey" type="password" autocomplete="off" placeholder="Leave blank to keep current key" /></label>
+        <label>Timeout ms<input name="timeoutMs" type="number" min="1000" step="1000" value="30000" /></label>
+        <label>Temperature<input name="temperature" type="number" min="0" max="2" step="0.1" value="0.2" /></label>
+        <div class="modal-actions">
+          <button class="secondary-button" type="button" data-close-modal>Cancel</button>
+          <button class="primary-button" type="submit">Save</button>
         </div>
       </form>
     </dialog>

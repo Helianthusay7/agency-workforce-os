@@ -24,6 +24,7 @@ export interface LlmConfig {
   temperature?: number | string;
   timeoutMs?: number | string;
   allowMockFallback?: boolean | string;
+  apiKey?: string;
 }
 
 export interface AgentTemplate {

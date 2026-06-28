@@ -8,6 +8,7 @@ interface ResolvedLlmConfig {
   temperature: number;
   timeoutMs: number;
   allowMockFallback: boolean;
+  apiKey: string;
 }
 
 interface ProviderMetadata {
@@ -36,7 +37,8 @@ function boolOrDefault(value: unknown, fallback: boolean): boolean {
 function resolveAgentLlmConfig(agent: Employee): ResolvedLlmConfig {
   const employeeConfig: LlmConfig = agent.llmConfig && typeof agent.llmConfig === "object" ? agent.llmConfig : {};
   const provider = String(employeeConfig.provider || process.env.AGENCY_LLM_PROVIDER || "mock").toLowerCase();
-  const keyRef = employeeConfig.keyRef || employeeConfig.apiKeyEnv || (provider === "mock" ? "" : "OPENAI_API_KEY");
+  const directApiKey = typeof employeeConfig.apiKey === "string" ? employeeConfig.apiKey : "";
+  const keyRef = directApiKey ? "user_api_key" : employeeConfig.keyRef || employeeConfig.apiKeyEnv || (provider === "mock" ? "" : "OPENAI_API_KEY");
 
   return {
     provider,
@@ -45,7 +47,8 @@ function resolveAgentLlmConfig(agent: Employee): ResolvedLlmConfig {
     baseUrl: employeeConfig.baseUrl || process.env.AGENCY_LLM_BASE_URL || "",
     temperature: numberOrDefault(employeeConfig.temperature ?? process.env.AGENCY_LLM_TEMPERATURE, 0.2),
     timeoutMs: numberOrDefault(employeeConfig.timeoutMs ?? process.env.AGENCY_LLM_TIMEOUT_MS, defaultTimeoutMs(provider)),
-    allowMockFallback: boolOrDefault(employeeConfig.allowMockFallback ?? process.env.AGENCY_LLM_ALLOW_MOCK_FALLBACK, provider === "mock")
+    allowMockFallback: boolOrDefault(employeeConfig.allowMockFallback ?? process.env.AGENCY_LLM_ALLOW_MOCK_FALLBACK, provider === "mock"),
+    apiKey: directApiKey
   };
 }
 
@@ -175,7 +178,7 @@ async function runOpenAiResponsesAdapter(
   project: Project | undefined,
   config: ResolvedLlmConfig
 ): Promise<LlmResult> {
-  const apiKey = config.keyRef ? process.env[config.keyRef] : "";
+  const apiKey = config.apiKey || (config.keyRef ? process.env[config.keyRef] : "");
   if (!apiKey) missingKeyError(config);
 
   const baseUrl = config.baseUrl || "https://api.openai.com/v1";
@@ -230,7 +233,7 @@ async function runOpenAiCompatibleChatAdapter(
   project: Project | undefined,
   config: ResolvedLlmConfig
 ): Promise<LlmResult> {
-  const apiKey = config.keyRef ? process.env[config.keyRef] : "";
+  const apiKey = config.apiKey || (config.keyRef ? process.env[config.keyRef] : "");
   if (!apiKey) missingKeyError(config);
 
   const baseUrl = config.baseUrl || "https://api.openai.com/v1";

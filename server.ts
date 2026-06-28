@@ -1,4 +1,5 @@
 import http from "node:http";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -17,6 +18,10 @@ const stateFile = path.join(dataDir, "state.json");
 const port = Number(process.env.PORT || 4173);
 const maxJsonBodyBytes = Number(process.env.AGENCY_MAX_BODY_BYTES || 2 * 1024 * 1024);
 const apiToken = process.env.AGENCY_API_TOKEN || "";
+const authSecret = process.env.AGENCY_AUTH_SECRET || apiToken || "local-development-secret-change-me";
+const sessionCookieName = "agency_session";
+const sessionMaxAgeSeconds = Number(process.env.AGENCY_SESSION_MAX_AGE_SECONDS || 60 * 60 * 24 * 14);
+const encryptionKey = createHash("sha256").update(authSecret).digest();
 const allowedOrigins = new Set((process.env.AGENCY_ALLOWED_ORIGINS || "").split(",").map((item) => item.trim()).filter(Boolean));
 const now = () => new Date().toISOString();
 const id = (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
@@ -581,16 +586,400 @@ function originAllowed(req) {
 }
 
 function assertApiAccess(req) {
-    if (apiToken) {
-        if (bearerToken(req) !== apiToken) throw apiError("Unauthorized", 401);
-    } else if (!isLocalRequest(req)) {
-        throw apiError("AGENCY_API_TOKEN is required for non-local API access", 401);
-    }
     if (isMutatingApiRequest(req) && !originAllowed(req)) {
         throw apiError("Origin is not allowed", 403);
     }
 }
 
+
+function base64UrlEncode(value) {
+    return Buffer.from(value).toString("base64url");
+}
+function base64UrlJson(value) {
+    return base64UrlEncode(JSON.stringify(value));
+}
+function hmac(value) {
+    return createHmac("sha256", authSecret).update(value).digest("base64url");
+}
+function parseCookies(req) {
+    const result = {};
+    const raw = String(req.headers.cookie || "");
+    for (const part of raw.split(";")) {
+        const index = part.indexOf("=");
+        if (index < 0) continue;
+        const name = decodeURIComponent(part.slice(0, index).trim());
+        result[name] = decodeURIComponent(part.slice(index + 1).trim());
+    }
+    return result;
+}
+function signSession(userId) {
+    const payload = base64UrlJson({ userId, exp: Date.now() + sessionMaxAgeSeconds * 1000 });
+    return payload + "." + hmac(payload);
+}
+function verifySessionToken(token) {
+    const [payload, signature] = String(token || "").split(".");
+    if (!payload || !signature || hmac(payload) !== signature) return null;
+    try {
+        const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+        if (!decoded.userId || Number(decoded.exp || 0) < Date.now()) return null;
+        return String(decoded.userId);
+    }
+    catch {
+        return null;
+    }
+}
+function sessionUser(req, state) {
+    const token = parseCookies(req)[sessionCookieName];
+    const userId = verifySessionToken(token);
+    if (!userId || !Array.isArray(state.users)) return null;
+    return state.users.find((user) => user.id === userId && user.status !== "disabled") || null;
+}
+function sessionCookie(token, req) {
+    const secure = req.socket.encrypted ? "; Secure" : "";
+    return sessionCookieName + "=" + encodeURIComponent(token) + "; HttpOnly; SameSite=Lax; Path=/; Max-Age=" + sessionMaxAgeSeconds + secure;
+}
+function clearSessionCookie() {
+    return sessionCookieName + "=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+}
+function sendJsonWithHeaders(res, status, payload, headers = {}) {
+    const body = JSON.stringify(payload);
+    res.writeHead(status, {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+        ...headers
+    });
+    res.end(body);
+}
+function normalizeEmail(value) {
+    return String(value || "").trim().toLowerCase();
+}
+function hashPassword(password) {
+    const salt = randomBytes(16).toString("base64url");
+    const hash = scryptSync(String(password), salt, 64).toString("base64url");
+    return "scrypt:" + salt + ":" + hash;
+}
+function verifyPassword(password, stored) {
+    const parts = String(stored || "").split(":");
+    if (parts.length !== 3 || parts[0] !== "scrypt") return false;
+    const actual = scryptSync(String(password), parts[1], 64);
+    const expected = Buffer.from(parts[2], "base64url");
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+function encryptSecret(value) {
+    if (!value) return "";
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", encryptionKey, iv);
+    const encrypted = Buffer.concat([cipher.update(String(value), "utf8"), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return [iv.toString("base64url"), tag.toString("base64url"), encrypted.toString("base64url")].join(".");
+}
+function decryptSecret(value) {
+    if (!value) return "";
+    const [ivText, tagText, encryptedText] = String(value).split(".");
+    if (!ivText || !tagText || !encryptedText) return "";
+    const decipher = createDecipheriv("aes-256-gcm", encryptionKey, Buffer.from(ivText, "base64url"));
+    decipher.setAuthTag(Buffer.from(tagText, "base64url"));
+    return Buffer.concat([
+        decipher.update(Buffer.from(encryptedText, "base64url")),
+        decipher.final()
+    ]).toString("utf8");
+}
+function publicUserLlmConfig(user) {
+    const config = user?.llmConfig || {};
+    return {
+        provider: config.provider || "openai-compatible",
+        model: config.model || DEFAULT_LLM_MODEL,
+        baseUrl: config.baseUrl || "",
+        temperature: config.temperature ?? 0.2,
+        timeoutMs: config.timeoutMs || 30000,
+        apiKeyConfigured: Boolean(config.apiKeyEncrypted)
+    };
+}
+function publicUser(user) {
+    if (!user) return null;
+    return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role || "Owner",
+        teamId: user.teamId || "",
+        status: user.status || "active",
+        llmConfig: publicUserLlmConfig(user)
+    };
+}
+function updateUserLlmConfig(user, input) {
+    const current = user.llmConfig && typeof user.llmConfig === "object" ? user.llmConfig : {};
+    const source = input && typeof input === "object" ? input : {};
+    const provider = String(source.provider || current.provider || "openai-compatible").toLowerCase();
+    const allowedProviders = new Set(["mock", "openai", "openai-compatible"]);
+    const next = {
+        provider: allowedProviders.has(provider) ? provider : "openai-compatible",
+        model: String(source.model || current.model || DEFAULT_LLM_MODEL),
+        baseUrl: String(source.baseUrl || current.baseUrl || ""),
+        temperature: Number.isFinite(Number(source.temperature ?? current.temperature)) ? Number(source.temperature ?? current.temperature) : 0.2,
+        timeoutMs: Number.isFinite(Number(source.timeoutMs ?? current.timeoutMs)) ? Number(source.timeoutMs ?? current.timeoutMs) : 30000,
+        apiKeyEncrypted: current.apiKeyEncrypted || ""
+    };
+    if (typeof source.apiKey === "string" && source.apiKey.trim()) {
+        next.apiKeyEncrypted = encryptSecret(source.apiKey.trim());
+    }
+    if (source.clearApiKey === true) {
+        next.apiKeyEncrypted = "";
+    }
+    user.llmConfig = next;
+    return next;
+}
+function userLlmConfigForAgent(user, agent) {
+    const userConfig = user?.llmConfig || {};
+    const agentConfig = agent?.llmConfig && typeof agent.llmConfig === "object" ? agent.llmConfig : {};
+    const apiKey = userConfig.apiKeyEncrypted ? decryptSecret(userConfig.apiKeyEncrypted) : "";
+    return {
+        ...agentConfig,
+        provider: userConfig.provider || agentConfig.provider || "openai-compatible",
+        model: userConfig.model || agentConfig.model || agent.model || DEFAULT_LLM_MODEL,
+        baseUrl: userConfig.baseUrl || agentConfig.baseUrl || "",
+        temperature: userConfig.temperature ?? agentConfig.temperature ?? 0.2,
+        timeoutMs: userConfig.timeoutMs || agentConfig.timeoutMs || 30000,
+        allowMockFallback: false,
+        keyRef: apiKey ? "user_api_key" : agentConfig.keyRef || agentConfig.apiKeyEnv || "",
+        apiKey
+    };
+}
+function withUserLlmConfig(user, agent) {
+    return {
+        ...agent,
+        llmConfig: userLlmConfigForAgent(user, agent)
+    };
+}
+function resourceOwnerId(item, fallbackUserId) {
+    return String(item?.ownerUserId || item?.userId || fallbackUserId || "");
+}
+function belongsToUser(item, userId) {
+    return resourceOwnerId(item, userId) === userId;
+}
+function workspaceOwnerIds(state) {
+    const users = Array.isArray(state.users) ? state.users : [];
+    return users.map((user) => user.id).filter(Boolean);
+}
+function ownedTeams(state, userId) {
+    return (state.teams || []).filter((item) => belongsToUser(item, userId));
+}
+function ownedProjects(state, userId) {
+    return (state.projects || []).filter((item) => belongsToUser(item, userId));
+}
+function ownedEmployees(state, userId) {
+    return (state.employees || []).filter((item) => belongsToUser(item, userId));
+}
+function ownedTasks(state, userId) {
+    return (state.tasks || []).filter((item) => item.ownerUserId === userId || ownedProjects(state, userId).some((project) => project.id === item.projectId));
+}
+function taskIdsForUser(state, userId) {
+    return new Set(ownedTasks(state, userId).map((task) => task.id));
+}
+function employeeIdsForUser(state, userId) {
+    return new Set(ownedEmployees(state, userId).map((employee) => employee.id));
+}
+function scopedStateForUser(state, user) {
+    const userId = user.id;
+    const tasks = ownedTasks(state, userId);
+    const taskIds = new Set(tasks.map((task) => task.id));
+    const employees = ownedEmployees(state, userId);
+    const employeeIds = new Set(employees.map((employee) => employee.id));
+    const roomIds = new Set((state.chatRooms || []).filter((room) => taskIds.has(room.taskId)).map((room) => room.id));
+    const resourceIds = new Set([
+        ...taskIds,
+        ...employeeIds,
+        ...ownedProjects(state, userId).map((project) => project.id),
+        ...(state.approvals || []).filter((approval) => taskIds.has(approval.taskId)).map((approval) => approval.id),
+        ...(state.artifacts || []).filter((artifact) => taskIds.has(artifact.taskId)).map((artifact) => artifact.id)
+    ]);
+    return {
+        ...state,
+        users: [publicUser(user)],
+        currentUser: publicUser(user),
+        teams: ownedTeams(state, userId),
+        projects: ownedProjects(state, userId),
+        employees,
+        tasks,
+        approvals: (state.approvals || []).filter((approval) => taskIds.has(approval.taskId) || approval.reviewerUserId === userId),
+        artifacts: (state.artifacts || []).filter((artifact) => taskIds.has(artifact.taskId)),
+        auditLogs: (state.auditLogs || []).filter((log) => log.ownerUserId === userId || log.actorId === userId || employeeIds.has(log.actorId) || resourceIds.has(log.targetId)),
+        chatRooms: (state.chatRooms || []).filter((room) => taskIds.has(room.taskId)),
+        chatMessages: (state.chatMessages || []).filter((message) => taskIds.has(message.taskId) || roomIds.has(message.roomId)),
+        executionTraces: (state.executionTraces || []).filter((trace) => taskIds.has(trace.taskId)),
+        executionRuns: (state.executionRuns || []).filter((run) => taskIds.has(run.taskId)),
+        toolInvocations: (state.toolInvocations || []).filter((invocation) => taskIds.has(invocation.taskId)),
+        events: (state.events || []).filter((event) => !event.taskId || taskIds.has(event.taskId))
+    };
+}
+function findOwnedTask(state, userId, taskId) {
+    return ownedTasks(state, userId).find((task) => task.id === taskId);
+}
+function findOwnedEmployee(state, userId, employeeId) {
+    return ownedEmployees(state, userId).find((employee) => employee.id === employeeId);
+}
+function findOwnedApproval(state, userId, approvalId) {
+    const taskIds = taskIdsForUser(state, userId);
+    return (state.approvals || []).find((approval) => approval.id === approvalId && (taskIds.has(approval.taskId) || approval.reviewerUserId === userId));
+}
+function ensureAuthState(state) {
+    if (!Array.isArray(state.users)) state.users = [];
+    if (!state.users.length) {
+        state.users.push({
+            id: id("usr"),
+            name: "Owner",
+            email: "owner@example.local",
+            role: "Owner",
+            status: "active",
+            createdAt: now()
+        });
+    }
+    const defaultOwnerId = state.users[0].id;
+    for (const user of state.users) {
+        user.email = normalizeEmail(user.email);
+        user.role = user.role || "Owner";
+        user.status = user.status || "active";
+        if (!user.llmConfig) {
+            user.llmConfig = {
+                provider: "openai-compatible",
+                model: DEFAULT_LLM_MODEL,
+                baseUrl: "",
+                temperature: 0.2,
+                timeoutMs: 30000,
+                apiKeyEncrypted: ""
+            };
+        }
+    }
+    for (const collectionName of ["teams", "projects", "employees"]) {
+        if (!Array.isArray(state[collectionName])) state[collectionName] = [];
+        for (const item of state[collectionName]) {
+            if (!item.ownerUserId) item.ownerUserId = defaultOwnerId;
+        }
+    }
+    if (Array.isArray(state.tasks)) {
+        for (const task of state.tasks) {
+            if (!task.ownerUserId) task.ownerUserId = defaultOwnerId;
+        }
+    }
+    if (Array.isArray(state.auditLogs)) {
+        for (const log of state.auditLogs) {
+            if (!log.ownerUserId) log.ownerUserId = log.actorType === "user" && log.actorId ? log.actorId : defaultOwnerId;
+        }
+    }
+}
+function cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+function createUserWorkspace(state, user) {
+    const suffix = user.id.replace(/^usr_/, "");
+    const teamIdMap = new Map();
+    const projectIdMap = new Map();
+    const employeeIdMap = new Map();
+    for (const team of cloneJson(seedState.teams || [])) {
+        const oldId = team.id;
+        team.id = oldId + "_" + suffix;
+        team.ownerUserId = user.id;
+        team.leadUserId = user.id;
+        teamIdMap.set(oldId, team.id);
+        state.teams.push(team);
+    }
+    for (const project of cloneJson(seedState.projects || [])) {
+        const oldId = project.id;
+        project.id = oldId + "_" + suffix;
+        project.ownerUserId = user.id;
+        project.teamId = teamIdMap.get(project.teamId) || project.teamId;
+        projectIdMap.set(oldId, project.id);
+        state.projects.push(project);
+    }
+    for (const employee of cloneJson(seedState.employees || [])) {
+        const oldId = employee.id;
+        employee.id = oldId + "_" + suffix;
+        employee.ownerUserId = user.id;
+        employee.teamId = teamIdMap.get(employee.teamId) || employee.teamId;
+        employee.currentTaskId = null;
+        employee.status = "available";
+        employee.load = 0;
+        employee.llmConfig = normalizeLlmConfig({
+            provider: "openai-compatible",
+            model: DEFAULT_LLM_MODEL,
+            keyRef: "",
+            baseUrl: "",
+            timeoutMs: 30000,
+            allowMockFallback: false
+        }, {}, DEFAULT_LLM_MODEL);
+        employeeIdMap.set(oldId, employee.id);
+        state.employees.push(employee);
+    }
+    return { teamIdMap, projectIdMap, employeeIdMap };
+}
+function workspaceSlice(state, userId) {
+    return {
+        ...state,
+        users: (state.users || []).filter((user) => user.id === userId),
+        teams: ownedTeams(state, userId),
+        projects: ownedProjects(state, userId),
+        employees: ownedEmployees(state, userId),
+        tasks: ownedTasks(state, userId),
+        approvals: (state.approvals || []).filter((approval) => taskIdsForUser(state, userId).has(approval.taskId)),
+        artifacts: (state.artifacts || []).filter((artifact) => taskIdsForUser(state, userId).has(artifact.taskId))
+    };
+}
+async function handleAuthApi(req, res, pathname, state) {
+    if (req.method === "GET" && pathname === "/api/auth/me") {
+        sendJson(res, 200, { user: publicUser(sessionUser(req, state)) });
+        return true;
+    }
+    if (req.method === "POST" && pathname === "/api/auth/logout") {
+        sendJsonWithHeaders(res, 200, { ok: true }, { "set-cookie": clearSessionCookie() });
+        return true;
+    }
+    if (req.method === "POST" && (pathname === "/api/auth/login" || pathname === "/api/auth/register")) {
+        const body = await readBody(req);
+        const email = normalizeEmail(body.email);
+        const password = String(body.password || "");
+        if (!email || !email.includes("@") || password.length < 8) {
+            sendJson(res, 400, { error: "Email and password with at least 8 characters are required" });
+            return true;
+        }
+        let user = state.users.find((item) => normalizeEmail(item.email) === email);
+        if (pathname === "/api/auth/register") {
+            if (user && user.passwordHash) {
+                sendJson(res, 409, { error: "This email is already registered" });
+                return true;
+            }
+            if (!user) {
+                user = {
+                    id: id("usr"),
+                    name: String(body.name || email.split("@")[0] || "User"),
+                    email,
+                    role: "Owner",
+                    status: "active",
+                    createdAt: now()
+                };
+                state.users.push(user);
+                createUserWorkspace(state, user);
+            }
+            if (!ownedProjects(state, user.id).length) {
+                createUserWorkspace(state, user);
+            }
+            user.name = String(body.name || user.name || email.split("@")[0]);
+            user.email = email;
+            user.passwordHash = hashPassword(password);
+            updateUserLlmConfig(user, user.llmConfig || {});
+            ensureGovernanceState(state);
+            await saveState(state);
+            sendJsonWithHeaders(res, 201, { user: publicUser(user) }, { "set-cookie": sessionCookie(signSession(user.id), req) });
+            return true;
+        }
+        if (!user?.passwordHash || !verifyPassword(password, user.passwordHash)) {
+            sendJson(res, 401, { error: "Invalid email or password" });
+            return true;
+        }
+        sendJsonWithHeaders(res, 200, { user: publicUser(user) }, { "set-cookie": sessionCookie(signSession(user.id), req) });
+        return true;
+    }
+    return false;
+}
 function sendNoContent(res, req) {
     const origin = String(req.headers.origin || "");
     const headers = {
@@ -751,6 +1140,22 @@ function ensureGovernanceState(state) {
         existingEmployee.status = existingEmployee.status || "available";
         existingEmployee.load = Number.isFinite(Number(existingEmployee.load)) ? Number(existingEmployee.load) : 0;
         existingEmployee.currentTaskId = existingEmployee.currentTaskId || null;
+    }
+    for (const ownerUserId of workspaceOwnerIds(state)) {
+        for (const employee of governanceEmployees) {
+            const existingForOwner = state.employees.find((item) => item.ownerUserId === ownerUserId && item.templateId === employee.templateId);
+            if (!existingForOwner) {
+                state.employees.push({
+                    ...employee,
+                    id: id("emp"),
+                    ownerUserId,
+                    llmConfig: { ...employee.llmConfig },
+                    status: "available",
+                    load: 0,
+                    currentTaskId: null
+                });
+            }
+        }
     }
     for (const task of state.tasks) {
         if (!Array.isArray(task.signoffs))
@@ -1073,28 +1478,51 @@ async function handleApi(req, res, url) {
 async function handleApiUnlocked(req, res, url) {
     const state = await loadState();
     const pathname = url.pathname;
+    ensureAuthState(state);
     ensureBusinessSkillState(state);
     ensureGovernanceState(state);
     normalizeLocalizedProfessions(state);
     ensureEmployeeLlmDefaults(state);
+    if (await handleAuthApi(req, res, pathname, state)) return;
+    const currentUser = sessionUser(req, state);
+    if (!currentUser) {
+        sendJson(res, 401, { error: "Login required" });
+        return;
+    }
+    const currentUserId = currentUser.id;
+    const currentUserState = () => workspaceSlice(state, currentUserId);
+    if (req.method === "GET" && pathname === "/api/me/llm-config") {
+        sendJson(res, 200, publicUserLlmConfig(currentUser));
+        return;
+    }
+    if (req.method === "PATCH" && pathname === "/api/me/llm-config") {
+        const body = await readBody(req);
+        updateUserLlmConfig(currentUser, body.llmConfig || body);
+        await saveState(state);
+        sendJson(res, 200, publicUserLlmConfig(currentUser));
+        return;
+    }
     if (req.method === "GET" && pathname === "/api/state") {
         ensureChatState(state);
         ensureRuntimeState(state);
         ensureExecutionState(state);
-        sendJson(res, 200, { ...state, dashboard: deriveDashboard(state) });
+        const scoped = scopedStateForUser(state, currentUser);
+        sendJson(res, 200, { ...scoped, dashboard: deriveDashboard(scoped) });
         return;
     }
     if (req.method === "POST" && pathname === "/api/tasks") {
         const body = await readBody(req);
         const assignmentMode = body.autoAssign || body.assignmentMode === "auto" ? "auto" : "manual";
+        const userEmployees = ownedEmployees(state, currentUserId);
+        const userEmployeeIds = new Set(userEmployees.map((employee) => employee.id));
         const assignedEmployeeIds = assignmentMode === "auto"
-            ? autoAssignEmployees(state, body)
-            : (Array.isArray(body.assignedEmployeeIds) ? body.assignedEmployeeIds.filter(Boolean) : []);
+            ? autoAssignEmployees(currentUserState(), body)
+            : (Array.isArray(body.assignedEmployeeIds) ? body.assignedEmployeeIds.filter((employeeId) => userEmployeeIds.has(employeeId)) : []);
         const task = {
             id: id("task"),
             title: String(body.title || "未命名任务"),
-            projectId: body.projectId || state.projects[0]?.id,
-            ownerUserId: body.ownerUserId || state.users[0]?.id,
+            projectId: ownedProjects(state, currentUserId).some((project) => project.id === body.projectId) ? body.projectId : ownedProjects(state, currentUserId)[0]?.id,
+            ownerUserId: currentUserId,
             status: "todo",
             priority: body.priority || "P2",
             description: String(body.description || ""),
@@ -1105,10 +1533,11 @@ async function handleApiUnlocked(req, res, url) {
             createdAt: now()
         };
         state.tasks.unshift(task);
-        assignEmployeesToTask(state, task, task.assignedEmployeeIds);
+        assignEmployeesToTask(currentUserState(), task, task.assignedEmployeeIds);
         addLog(state, {
             actorType: "user",
-            actorId: task.ownerUserId,
+            actorId: currentUserId,
+            ownerUserId: currentUserId,
             event: "created_task",
             targetId: task.id,
             detail: `创建任务：${task.title}`
@@ -1129,7 +1558,7 @@ async function handleApiUnlocked(req, res, url) {
     const taskStatusMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/status$/);
     if (req.method === "PATCH" && taskStatusMatch) {
         const body = await readBody(req);
-        const task = state.tasks.find((item) => item.id === taskStatusMatch[1]);
+        const task = findOwnedTask(state, currentUserId, taskStatusMatch[1]);
         if (!task)
             return notFound(res);
         const nextStatus = String(body.status || task.status);
@@ -1151,7 +1580,8 @@ async function handleApiUnlocked(req, res, url) {
         }
         addLog(state, {
             actorType: "user",
-            actorId: body.actorId || state.users[0]?.id,
+            actorId: currentUserId,
+            ownerUserId: currentUserId,
             event: "updated_task_status",
             targetId: task.id,
             detail: `任务状态更新为 ${task.status}`
@@ -1164,7 +1594,7 @@ async function handleApiUnlocked(req, res, url) {
     if (req.method === "POST" && taskSignoffMatch) {
         const body = await readBody(req);
         ensureRuntimeState(state);
-        const task = state.tasks.find((item) => item.id === taskSignoffMatch[1]);
+        const task = findOwnedTask(state, currentUserId, taskSignoffMatch[1]);
         if (!task)
             return notFound(res);
         if (!Array.isArray(task.signoffs))
@@ -1186,17 +1616,19 @@ async function handleApiUnlocked(req, res, url) {
     const taskAssignMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/assign$/);
     if (req.method === "POST" && taskAssignMatch) {
         const body = await readBody(req);
-        const task = state.tasks.find((item) => item.id === taskAssignMatch[1]);
+        const task = findOwnedTask(state, currentUserId, taskAssignMatch[1]);
         if (!task)
             return notFound(res);
-        const employeeIds = Array.isArray(body.employeeIds) ? body.employeeIds : [];
+        const ownedEmployeeIds = new Set(ownedEmployees(state, currentUserId).map((employee) => employee.id));
+        const employeeIds = Array.isArray(body.employeeIds) ? body.employeeIds.filter((employeeId) => ownedEmployeeIds.has(employeeId)) : [];
         const existingEmployeeIds = new Set(task.assignedEmployeeIds);
         const newEmployeeIds = employeeIds.filter((employeeId) => !existingEmployeeIds.has(employeeId));
         task.assignedEmployeeIds = [...new Set([...task.assignedEmployeeIds, ...employeeIds])];
-        assignEmployeesToTask(state, task, newEmployeeIds, 18);
+        assignEmployeesToTask(currentUserState(), task, newEmployeeIds, 18);
         addLog(state, {
             actorType: "user",
-            actorId: body.actorId || state.users[0]?.id,
+            actorId: currentUserId,
+            ownerUserId: currentUserId,
             event: "assigned_employees",
             targetId: task.id,
             detail: `指派 AI 员工：${employeeIds.join(", ")}`
@@ -1208,12 +1640,13 @@ async function handleApiUnlocked(req, res, url) {
     if (req.method === "POST" && pathname === "/api/employees") {
         const body = await readBody(req);
         const template = state.agentTemplates.find((item) => item.id === body.templateId) || state.agentTemplates[0];
+        const ownedTeamIds = new Set(ownedTeams(state, currentUserId).map((team) => team.id));
         const employee = {
             id: id("emp"),
             templateId: template.id,
             displayName: String(body.displayName || template.name.split(" ")[0]),
             title: String(body.title || aiEmployeeTitleForTemplate(String(template.name || ""))),
-            teamId: body.teamId || state.teams[0]?.id,
+            teamId: ownedTeamIds.has(body.teamId) ? body.teamId : ownedTeams(state, currentUserId)[0]?.id,
             model: body.model || DEFAULT_LLM_MODEL,
             llmConfig: normalizeLlmConfig(body.llmConfig, {}, body.model || DEFAULT_LLM_MODEL),
             permission: normalizePermissionValue(body.permission),
@@ -1224,12 +1657,14 @@ async function handleApiUnlocked(req, res, url) {
             systemPromptSource: template.systemPrompt ? "template.systemPrompt" : "template.summary",
             status: "available",
             load: 0,
-            currentTaskId: null
+            currentTaskId: null,
+            ownerUserId: currentUserId
         };
         state.employees.push(employee);
         addLog(state, {
             actorType: "user",
-            actorId: body.actorId || state.users[0]?.id,
+            actorId: currentUserId,
+            ownerUserId: currentUserId,
             event: "created_employee",
             targetId: employee.id,
             detail: `创建 AI 员工：${employee.displayName}`
@@ -1241,14 +1676,15 @@ async function handleApiUnlocked(req, res, url) {
     const employeeLlmConfigMatch = pathname.match(/^\/api\/employees\/([^/]+)\/llm-config$/);
     if (req.method === "PATCH" && employeeLlmConfigMatch) {
         const body = await readBody(req);
-        const employee = state.employees.find((item) => item.id === employeeLlmConfigMatch[1]);
+        const employee = findOwnedEmployee(state, currentUserId, employeeLlmConfigMatch[1]);
         if (!employee)
             return notFound(res);
         employee.llmConfig = normalizeLlmConfig(body.llmConfig || body, employee.llmConfig, employee.model);
         employee.model = employee.llmConfig.model || employee.model;
         addLog(state, {
             actorType: "user",
-            actorId: body.actorId || state.users[0]?.id,
+            actorId: currentUserId,
+            ownerUserId: currentUserId,
             event: "updated_employee_llm_config",
             targetId: employee.id,
             detail: `Updated LLM config for ${employee.displayName}: provider=${employee.llmConfig.provider}, model=${employee.llmConfig.model}, keyRef=${employee.llmConfig.keyRef || "none"}`
@@ -1260,7 +1696,7 @@ async function handleApiUnlocked(req, res, url) {
     const approvalMatch = pathname.match(/^\/api\/approvals\/([^/]+)\/resolve$/);
     if (req.method === "POST" && approvalMatch) {
         const body = await readBody(req);
-        const approval = state.approvals.find((item) => item.id === approvalMatch[1]);
+        const approval = findOwnedApproval(state, currentUserId, approvalMatch[1]);
         if (!approval)
             return notFound(res);
         approval.status = body.status === "approved" ? "approved" : "rejected";
@@ -1278,7 +1714,8 @@ async function handleApiUnlocked(req, res, url) {
         }
         addLog(state, {
             actorType: "user",
-            actorId: approval.reviewerUserId,
+            actorId: currentUserId,
+            ownerUserId: currentUserId,
             event: "resolved_approval",
             targetId: approval.id,
             detail: `${approval.title}：${approval.status}`
@@ -1290,7 +1727,7 @@ async function handleApiUnlocked(req, res, url) {
     const taskApprovalMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/approvals$/);
     if (req.method === "POST" && taskApprovalMatch) {
         const body = await readBody(req);
-        const task = state.tasks.find((item) => item.id === taskApprovalMatch[1]);
+        const task = findOwnedTask(state, currentUserId, taskApprovalMatch[1]);
         if (!task)
             return notFound(res);
         const existingApproval = state.approvals.find((item) => item.taskId === task.id && item.status === "pending");
@@ -1305,7 +1742,7 @@ async function handleApiUnlocked(req, res, url) {
             taskId: task.id,
             title: String(body.title || `审批：${task.title}`),
             requesterEmployeeId: body.requesterEmployeeId || task.assignedEmployeeIds[0] || null,
-            reviewerUserId: body.reviewerUserId || task.ownerUserId,
+            reviewerUserId: currentUserId,
             status: "pending",
             risk: body.risk || "medium",
             action: String(body.action || ""),
@@ -1326,7 +1763,7 @@ async function handleApiUnlocked(req, res, url) {
     }
     const taskBreakdownMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/breakdown$/);
     if (req.method === "POST" && taskBreakdownMatch) {
-        const task = state.tasks.find((item) => item.id === taskBreakdownMatch[1]);
+        const task = findOwnedTask(state, currentUserId, taskBreakdownMatch[1]);
         if (!task)
             return notFound(res);
         const existingSubtasks = state.tasks.filter((item) => item.parentTaskId === task.id);
@@ -1334,8 +1771,8 @@ async function handleApiUnlocked(req, res, url) {
             sendJson(res, 200, { parentTask: task, subtasks: existingSubtasks, reused: true });
             return;
         }
-        const project = state.projects.find((item) => item.id === task.projectId);
-        const pmEmployee = state.employees.find((employee) => task.assignedEmployeeIds.includes(employee.id)) || state.employees.find((employee) => employee.templateId === "tpl_pm") || state.employees[0];
+        const project = ownedProjects(state, currentUserId).find((item) => item.id === task.projectId);
+        const pmEmployee = ownedEmployees(state, currentUserId).find((employee) => task.assignedEmployeeIds.includes(employee.id)) || ownedEmployees(state, currentUserId).find((employee) => employee.templateId === "tpl_pm") || ownedEmployees(state, currentUserId)[0];
         const specs = buildSubtasks(task, project);
         const subtasks = specs.map((spec, index) => ({
             id: id("task"),
@@ -1352,7 +1789,7 @@ async function handleApiUnlocked(req, res, url) {
         }));
         state.tasks.unshift(...subtasks);
         for (const subtask of subtasks) {
-            assignEmployeesToTask(state, subtask, subtask.assignedEmployeeIds, 6);
+            assignEmployeesToTask(currentUserState(), subtask, subtask.assignedEmployeeIds, 6);
         }
         const artifact = {
             id: id("art"),
@@ -1385,7 +1822,7 @@ async function handleApiUnlocked(req, res, url) {
     const taskChatMessageMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/chat\/messages$/);
     if (req.method === "POST" && taskChatMessageMatch) {
         const body = await readBody(req);
-        const task = state.tasks.find((item) => item.id === taskChatMessageMatch[1]);
+        const task = findOwnedTask(state, currentUserId, taskChatMessageMatch[1]);
         if (!task)
             return notFound(res);
         const room = ensureTaskChatRoom(state, task);
@@ -1413,12 +1850,12 @@ async function handleApiUnlocked(req, res, url) {
     }
     const taskChatRoundMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/chat\/agent-round$/);
     if (req.method === "POST" && taskChatRoundMatch) {
-        const task = state.tasks.find((item) => item.id === taskChatRoundMatch[1]);
+        const task = findOwnedTask(state, currentUserId, taskChatRoundMatch[1]);
         if (!task)
             return notFound(res);
         const room = ensureTaskChatRoom(state, task);
-        const project = state.projects.find((item) => item.id === task.projectId);
-        const employees = task.assignedEmployeeIds.map((employeeId) => state.employees.find((employee) => employee.id === employeeId)).filter(Boolean);
+        const project = ownedProjects(state, currentUserId).find((item) => item.id === task.projectId);
+        const employees = task.assignedEmployeeIds.map((employeeId) => findOwnedEmployee(state, currentUserId, employeeId)).filter(Boolean);
         if (!employees.length) {
             sendJson(res, 400, { error: "Task has no assigned AI employee" });
             return;
@@ -1476,11 +1913,12 @@ async function handleApiUnlocked(req, res, url) {
         ensureRuntimeState(state);
         ensureExecutionState(state);
         try {
+            if (!findOwnedTask(state, currentUserId, taskRunMatch[1])) return notFound(res);
             const result = await orchestrateTask(state, taskRunMatch[1], {
                 requestedAgentId: body.employeeId,
                 createId: id,
                 now,
-                callLlm: runAgentLlm
+                callLlm: (prompt, task, agent, template, project) => runAgentLlm(prompt, task, withUserLlmConfig(currentUser, agent), template, project)
             });
             addLog(state, {
                 actorType: "agent",
@@ -1503,8 +1941,8 @@ async function handleApiUnlocked(req, res, url) {
             if (error.status === 404)
                 return notFound(res);
             if (isApprovalRequiredError(error)) {
-                const task = state.tasks.find((item) => item.id === taskRunMatch[1]);
-                const agent = findTaskAgent(state, task, body.employeeId);
+                const task = findOwnedTask(state, currentUserId, taskRunMatch[1]);
+                const agent = findTaskAgent(currentUserState(), task, body.employeeId);
                 if (task && agent) {
                     const { approval, reused } = createExecutionApproval(state, task, agent, error.message);
                     await saveState(state);
@@ -1538,7 +1976,7 @@ async function handleApiUnlocked(req, res, url) {
     const taskArtifactMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/artifacts$/);
     if (req.method === "POST" && taskArtifactMatch) {
         const body = await readBody(req);
-        const task = state.tasks.find((item) => item.id === taskArtifactMatch[1]);
+        const task = findOwnedTask(state, currentUserId, taskArtifactMatch[1]);
         if (!task)
             return notFound(res);
         const artifact = {
