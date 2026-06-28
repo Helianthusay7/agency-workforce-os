@@ -1,4 +1,5 @@
 import { runAgentRuntime } from "./agentRuntime.js";
+import type { AgentRuntimeResult, RuntimeParsedOutput } from "./agentRuntime.js";
 import {
   completeExecutionRun,
   completeRunStep,
@@ -8,9 +9,89 @@ import {
   failRunStep,
   startRunStep
 } from "./executionEngine.js";
+import type { ExecutionRun } from "./types.js";
 import { EXECUTION_EVENT_TYPES, appendEvent } from "./eventStore.js";
+import { ensureToolGatewayState, executeArtifactToolActions } from "./toolGateway.js";
+import type {
+  AgentTemplate,
+  AppState,
+  Artifact,
+  Clock,
+  Employee,
+  ExecutionEventInput,
+  ExecutionTrace,
+  IdFactory,
+  LlmResult,
+  Project,
+  RuntimeError,
+  Task
+} from "./types.js";
 
-function snapshotTask(task) {
+interface TaskSnapshot extends Record<string, unknown> {
+  id: string;
+  title: string;
+  projectId?: string;
+  ownerUserId?: string;
+  status: string;
+  priority?: string;
+  description: string;
+  assignedEmployeeIds: string[];
+  dueDate: string;
+  parentTaskId: string | null;
+}
+
+interface AgentSnapshot extends Record<string, unknown> {
+  id: string;
+  displayName: string;
+  title: string;
+  templateId?: string;
+  role: string;
+  model?: string;
+  permission?: string;
+  llmConfig: {
+    provider: string | null;
+    model: string | null;
+    keyRef: string | null;
+    baseUrl: string | null;
+  };
+}
+
+interface ExecutionPolicy {
+  canRun: boolean;
+  requiresApproval: boolean;
+  allowedArtifactTypes: string[];
+}
+
+interface OrchestrateTaskOptions {
+  requestedAgentId?: string;
+  createId: IdFactory;
+  now: Clock;
+  callLlm: (
+    prompt: string,
+    task: Task,
+    agent: Employee,
+    template?: AgentTemplate,
+    project?: Project
+  ) => Promise<LlmResult>;
+}
+
+interface OrchestrateTaskResult {
+  task: Task;
+  employee: Employee;
+  agent: Employee;
+  artifact: Artifact;
+  executionTrace: ExecutionTrace;
+  orchestrationId: string;
+  executionRun: ExecutionRun;
+}
+
+function runtimeError(message: string, status?: number): RuntimeError {
+  const error = new Error(message) as RuntimeError;
+  if (status) error.status = status;
+  return error;
+}
+
+function snapshotTask(task: Task): TaskSnapshot {
   return {
     id: task.id,
     title: task.title,
@@ -25,7 +106,7 @@ function snapshotTask(task) {
   };
 }
 
-function snapshotAgent(agent, template) {
+function snapshotAgent(agent: Employee, template?: AgentTemplate): AgentSnapshot {
   const llmConfig = agent.llmConfig && typeof agent.llmConfig === "object" ? agent.llmConfig : {};
   return {
     id: agent.id,
@@ -44,15 +125,16 @@ function snapshotAgent(agent, template) {
   };
 }
 
-export function ensureExecutionState(state) {
+export function ensureExecutionState(state: AppState): void {
   ensureExecutionEngineState(state);
+  ensureToolGatewayState(state);
 }
 
-function emitEvent(state, createId, now, event) {
+function emitEvent(state: AppState, createId: IdFactory, now: Clock, event: ExecutionEventInput) {
   return appendEvent(state, createId, now, event);
 }
 
-function selectAgent(state, task, requestedAgentId) {
+function selectAgent(state: AppState, task: Task, requestedAgentId?: string): Employee | undefined {
   if (requestedAgentId) {
     return state.employees.find((agent) => agent.id === requestedAgentId && task.assignedEmployeeIds.includes(agent.id));
   }
@@ -61,27 +143,27 @@ function selectAgent(state, task, requestedAgentId) {
     .find(Boolean);
 }
 
-function normalizePermission(permission) {
+function normalizePermission(permission: unknown): string {
   const value = String(permission || "").trim().toLowerCase();
-  const aliases = {
+  const aliases: Record<string, string> = {
     "只读": "read only",
     "建议": "suggest",
     "草稿": "draft",
     "审批后执行": "execute with approval",
     "需审批执行": "execute with approval",
-    "read_only": "read only",
+    read_only: "read only",
     readonly: "read only",
     draft: "draft",
     suggest: "suggest",
     suggestion: "suggest",
-    "execute_with_approval": "execute with approval",
+    execute_with_approval: "execute with approval",
     "approval required": "execute with approval",
     execute: "execute"
   };
   return aliases[value] || value;
 }
 
-function hasApprovedExecution(state, task, agent) {
+function hasApprovedExecution(state: AppState, task: Task, agent: Employee): boolean {
   return state.approvals.some((approval) => {
     return approval.taskId === task.id
       && approval.status === "approved"
@@ -89,7 +171,7 @@ function hasApprovedExecution(state, task, agent) {
   });
 }
 
-function executionPolicy(agent) {
+function executionPolicy(agent: Employee): ExecutionPolicy {
   const permission = normalizePermission(agent.permission);
   if (permission === "read only") {
     return { canRun: false, requiresApproval: false, allowedArtifactTypes: [] };
@@ -109,30 +191,24 @@ function executionPolicy(agent) {
   return { canRun: true, requiresApproval: false, allowedArtifactTypes: ["doc", "plan", "analysis"] };
 }
 
-function assertAgentCanExecute(state, task, agent) {
+function assertAgentCanExecute(state: AppState, task: Task, agent: Employee): void {
   const policy = executionPolicy(agent);
   if (!policy.canRun) {
-    const error = new Error(`${agent.displayName} is read-only and cannot execute tasks`);
-    error.status = 403;
-    throw error;
+    throw runtimeError(`${agent.displayName} is read-only and cannot execute tasks`, 403);
   }
   if (policy.requiresApproval && !hasApprovedExecution(state, task, agent)) {
-    const error = new Error(`${agent.displayName} requires approved execution before running this task`);
-    error.status = 403;
-    throw error;
+    throw runtimeError(`${agent.displayName} requires approved execution before running this task`, 403);
   }
 }
 
-function assertArtifactAllowed(agent, parsedOutput) {
+function assertArtifactAllowed(agent: Employee, parsedOutput: RuntimeParsedOutput): void {
   const policy = executionPolicy(agent);
   if (!policy.allowedArtifactTypes.includes(parsedOutput.type)) {
-    const error = new Error(`${agent.displayName} is not permitted to create ${parsedOutput.type} artifacts`);
-    error.status = 403;
-    throw error;
+    throw runtimeError(`${agent.displayName} is not permitted to create ${parsedOutput.type} artifacts`, 403);
   }
 }
 
-function buildArtifact(createId, task, agent, runtimeResult) {
+function buildArtifact(createId: IdFactory, task: Task, agent: Employee, runtimeResult: AgentRuntimeResult): Artifact {
   const artifactId = createId("art");
   return {
     id: artifactId,
@@ -158,7 +234,13 @@ function buildArtifact(createId, task, agent, runtimeResult) {
   };
 }
 
-function buildExecutionTrace(createId, taskSnapshot, agentSnapshot, artifact, runtimeResult) {
+function buildExecutionTrace(
+  createId: IdFactory,
+  taskSnapshot: TaskSnapshot,
+  agentSnapshot: AgentSnapshot,
+  artifact: Artifact,
+  runtimeResult: AgentRuntimeResult
+): ExecutionTrace {
   return {
     id: createId("exec"),
     status: "succeeded",
@@ -186,7 +268,14 @@ function buildExecutionTrace(createId, taskSnapshot, agentSnapshot, artifact, ru
   };
 }
 
-function buildFailedExecutionTrace(createId, taskSnapshot, agentSnapshot, runtimeError, startedAt, completedAt) {
+function buildFailedExecutionTrace(
+  createId: IdFactory,
+  taskSnapshot: TaskSnapshot,
+  agentSnapshot: AgentSnapshot,
+  runtimeError: RuntimeError,
+  startedAt: string,
+  completedAt: string
+): ExecutionTrace {
   return {
     id: createId("exec"),
     status: "failed",
@@ -217,7 +306,18 @@ function buildFailedExecutionTrace(createId, taskSnapshot, agentSnapshot, runtim
   };
 }
 
-function emitLlmCalled(state, createId, now, { task, agent, orchestrationId, runtimeResult, error }) {
+function emitLlmCalled(
+  state: AppState,
+  createId: IdFactory,
+  now: Clock,
+  { task, agent, orchestrationId, runtimeResult, error }: {
+    task: Task;
+    agent: Employee;
+    orchestrationId: string;
+    runtimeResult?: AgentRuntimeResult;
+    error?: RuntimeError;
+  }
+): void {
   emitEvent(state, createId, now, {
     type: EXECUTION_EVENT_TYPES.LLM_CALLED,
     orchestrationId,
@@ -239,21 +339,17 @@ function emitLlmCalled(state, createId, now, { task, agent, orchestrationId, run
   });
 }
 
-export async function orchestrateTask(state, taskId, options) {
+export async function orchestrateTask(state: AppState, taskId: string, options: OrchestrateTaskOptions): Promise<OrchestrateTaskResult> {
   ensureExecutionState(state);
   const { createId, now, callLlm, requestedAgentId } = options;
   const task = state.tasks.find((item) => item.id === taskId);
   if (!task) {
-    const error = new Error("Task not found");
-    error.status = 404;
-    throw error;
+    throw runtimeError("Task not found", 404);
   }
 
   const agent = selectAgent(state, task, requestedAgentId);
   if (!agent) {
-    const error = new Error("Task has no assigned AI employee");
-    error.status = 400;
-    throw error;
+    throw runtimeError("Task has no assigned AI employee", 400);
   }
   assertAgentCanExecute(state, task, agent);
 
@@ -308,7 +404,7 @@ export async function orchestrateTask(state, taskId, options) {
     agent.load = Math.min(95, Number(agent.load || 0) + 10);
 
     state.artifacts.unshift(artifact);
-    state.executionTraces.unshift(executionTrace);
+    state.executionTraces!.unshift(executionTrace);
     emitEvent(state, createId, now, {
       type: EXECUTION_EVENT_TYPES.ARTIFACT_CREATED,
       orchestrationId,
@@ -323,6 +419,29 @@ export async function orchestrateTask(state, taskId, options) {
       executionTraceId: executionTrace.id
     });
 
+    startRunStep(state, executionRun, createId, now, "execute_tools", {
+      artifactId: artifact.id,
+      artifactType: artifact.type
+    });
+    const toolInvocations = await executeArtifactToolActions({ state, task, agent, artifact, createId, now });
+    artifact.toolInvocations = toolInvocations;
+    executionTrace.toolInvocations = toolInvocations;
+    for (const invocation of toolInvocations) {
+      emitEvent(state, createId, now, {
+        type: EXECUTION_EVENT_TYPES.TOOL_CALLED,
+        orchestrationId,
+        taskId: task.id,
+        agentId: agent.id,
+        artifactId: artifact.id,
+        executionTraceId: executionTrace.id,
+        payload: { invocation }
+      });
+    }
+    completeRunStep(state, executionRun, createId, now, "execute_tools", {
+      toolInvocationIds: toolInvocations.map((invocation) => invocation.id),
+      count: toolInvocations.length
+    });
+
     startRunStep(state, executionRun, createId, now, "persist_events", {
       artifactId: artifact.id,
       executionTraceId: executionTrace.id
@@ -334,7 +453,11 @@ export async function orchestrateTask(state, taskId, options) {
       agentId: agent.id,
       artifactId: artifact.id,
       executionTraceId: executionTrace.id,
-      payload: { artifactId: artifact.id, executionTraceId: executionTrace.id }
+      payload: {
+        artifactId: artifact.id,
+        executionTraceId: executionTrace.id,
+        toolInvocationIds: Array.isArray(artifact.toolInvocations) ? artifact.toolInvocations.map((invocation) => invocation.id) : []
+      }
     });
     completeRunStep(state, executionRun, createId, now, "persist_events", {
       artifactId: artifact.id,
@@ -346,10 +469,11 @@ export async function orchestrateTask(state, taskId, options) {
     });
 
     return { task, employee: agent, agent, artifact, executionTrace, orchestrationId, executionRun };
-  } catch (error) {
+  } catch (caught) {
+    const error = caught as RuntimeError;
     const completedAt = now();
     const executionTrace = buildFailedExecutionTrace(createId, taskSnapshot, agentSnapshot, error, startedAt, completedAt);
-    state.executionTraces.unshift(executionTrace);
+    state.executionTraces!.unshift(executionTrace);
     if (executionRun.currentStep === "run_agent" && !llmEventEmitted) {
       emitLlmCalled(state, createId, now, { task, agent, orchestrationId, error });
     }

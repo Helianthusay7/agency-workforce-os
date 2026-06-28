@@ -1,20 +1,46 @@
 import { EXECUTION_EVENT_TYPES, appendEvent, ensureEventStoreState } from "./eventStore.js";
+import type {
+  AppState,
+  Clock,
+  ExecutionEventInput,
+  ExecutionEventRecord,
+  ExecutionRun,
+  ExecutionStep,
+  IdFactory,
+  RuntimeError
+} from "./types.js";
 
 export const EXECUTION_ENGINE_VERSION = "v2";
 
-export function ensureExecutionEngineState(state) {
+interface ExecutionSnapshot {
+  id: string;
+  [key: string]: unknown;
+}
+
+export function ensureExecutionEngineState(state: AppState): void {
   if (!Array.isArray(state.artifacts)) state.artifacts = [];
   ensureEventStoreState(state);
   if (!Array.isArray(state.executionTraces)) state.executionTraces = [];
   if (!Array.isArray(state.executionRuns)) state.executionRuns = [];
 }
 
-export function appendExecutionEvent(state, createId, now, event) {
+export function appendExecutionEvent(
+  state: AppState,
+  createId: IdFactory,
+  now: Clock,
+  event: ExecutionEventInput
+): ExecutionEventRecord {
   return appendEvent(state, createId, now, event);
 }
 
-export function createExecutionRun(state, createId, now, { taskSnapshot, agentSnapshot }) {
-  const run = {
+export function createExecutionRun(
+  state: AppState,
+  createId: IdFactory,
+  now: Clock,
+  { taskSnapshot, agentSnapshot }: { taskSnapshot: ExecutionSnapshot; agentSnapshot: ExecutionSnapshot }
+): ExecutionRun {
+  ensureExecutionEngineState(state);
+  const run: ExecutionRun = {
     id: createId("run"),
     engineVersion: EXECUTION_ENGINE_VERSION,
     taskId: taskSnapshot.id,
@@ -29,7 +55,7 @@ export function createExecutionRun(state, createId, now, { taskSnapshot, agentSn
     durationMs: null,
     error: null
   };
-  state.executionRuns.unshift(run);
+  state.executionRuns!.unshift(run);
   appendExecutionEvent(state, createId, now, {
     type: EXECUTION_EVENT_TYPES.EXECUTION_RUN_STARTED,
     orchestrationId: run.id,
@@ -40,8 +66,15 @@ export function createExecutionRun(state, createId, now, { taskSnapshot, agentSn
   return run;
 }
 
-export function startRunStep(state, run, createId, now, name, input = {}) {
-  const step = {
+export function startRunStep(
+  state: AppState,
+  run: ExecutionRun,
+  createId: IdFactory,
+  now: Clock,
+  name: string,
+  input: Record<string, unknown> = {}
+): ExecutionStep {
+  const step: ExecutionStep = {
     name,
     status: "running",
     startedAt: now(),
@@ -63,7 +96,14 @@ export function startRunStep(state, run, createId, now, name, input = {}) {
   return step;
 }
 
-export function completeRunStep(state, run, createId, now, name, output = {}) {
+export function completeRunStep(
+  state: AppState,
+  run: ExecutionRun,
+  createId: IdFactory,
+  now: Clock,
+  name: string,
+  output: Record<string, unknown> = {}
+): ExecutionStep | null {
   const step = [...run.steps].reverse().find((item) => item.name === name && item.status === "running");
   if (!step) return null;
   step.status = "succeeded";
@@ -81,7 +121,14 @@ export function completeRunStep(state, run, createId, now, name, output = {}) {
   return step;
 }
 
-export function failRunStep(state, run, createId, now, name, error) {
+export function failRunStep(
+  state: AppState,
+  run: ExecutionRun,
+  createId: IdFactory,
+  now: Clock,
+  name: string,
+  error: RuntimeError
+): ExecutionStep | null {
   const step = [...run.steps].reverse().find((item) => item.name === name && item.status === "running");
   if (!step) return null;
   step.status = "failed";
@@ -102,7 +149,13 @@ export function failRunStep(state, run, createId, now, name, error) {
   return step;
 }
 
-export function completeExecutionRun(state, run, createId, now, { artifactId, executionTraceId }) {
+export function completeExecutionRun(
+  state: AppState,
+  run: ExecutionRun,
+  createId: IdFactory,
+  now: Clock,
+  { artifactId, executionTraceId }: { artifactId?: string | null; executionTraceId?: string | null }
+): ExecutionRun {
   run.status = "succeeded";
   run.completedAt = now();
   run.durationMs = new Date(run.completedAt).getTime() - new Date(run.startedAt).getTime();
@@ -121,7 +174,14 @@ export function completeExecutionRun(state, run, createId, now, { artifactId, ex
   return run;
 }
 
-export function failExecutionRun(state, run, createId, now, error, executionTraceId = null) {
+export function failExecutionRun(
+  state: AppState,
+  run: ExecutionRun,
+  createId: IdFactory,
+  now: Clock,
+  error: RuntimeError,
+  executionTraceId: string | null = null
+): ExecutionRun {
   run.status = "failed";
   run.completedAt = now();
   run.durationMs = new Date(run.completedAt).getTime() - new Date(run.startedAt).getTime();

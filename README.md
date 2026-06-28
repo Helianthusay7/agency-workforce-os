@@ -66,11 +66,13 @@ implemented -> QA tested -> Reviewer reviewed -> Product approved -> Release don
 
 ## 运行方式
 
-要求 Node.js 20 或更高版本。
+要求 Node.js 20 或更高版本。Node 后端、导入工具和前端源码已经迁移为 TypeScript，运行前需要先安装依赖并编译。
 
 ```powershell
 git clone https://github.com/Helianthusay7/agency-workforce-os.git
 cd agency-workforce-os
+npm install
+npm run build
 npm start
 ```
 
@@ -80,11 +82,13 @@ npm start
 http://127.0.0.1:4173
 ```
 
-也可以使用 npm script：
+开发时可以使用：
 
 ```powershell
-npm run start
+npm run dev
 ```
+
+`npm run check` 会执行后端和前端 TypeScript no-emit 类型检查。`npm run build` 会输出后端到 `dist/`，并由 `src/client/app.ts` 生成浏览器加载的 `public/app.js`。
 
 ## LLM 配置
 
@@ -103,10 +107,25 @@ npm run start
 
 ```powershell
 $env:OPENAI_API_KEY="你的 key"
-node server.js
+npm run build
+npm start
 ```
 
 如果使用中转站，把员工的 provider 设置为 `openai-compatible`，填写对应 model、baseUrl 和 keyRef。
+
+测试中转站配置示例：
+
+```text
+provider: openai-compatible
+keyRef: OPENAI_TEST_KEY
+baseUrl: https://api.lmm.best:9000/v1
+```
+
+真实 API Key 只放在本机环境变量里：
+
+```powershell
+$env:OPENAI_TEST_KEY="你的测试 key"
+```
 
 ## 数据存储
 
@@ -121,13 +140,15 @@ data/state.json
 ## 关键文件
 
 ```text
-server.js              HTTP API、状态读写、任务/员工/审批接口
-orchestrator.js        任务编排：选择员工、调用 Runtime、写 artifact/event
-agentRuntime.js        构建 prompt、解析 LLM JSON 输出
-providerAdapters.js    mock/openai/openai-compatible provider 适配
-eventStore.js          Runtime 事件类型和事件写入
-executionEngine.js     执行 run/step 状态记录
-public/app.js          前端交互逻辑
+server.ts              HTTP API、状态读写、任务/员工/审批接口，编译后输出 dist/server.js
+orchestrator.ts        任务编排：选择员工、调用 Runtime、写 artifact/event
+agentRuntime.ts        构建 prompt、解析 LLM JSON 输出
+providerAdapters.ts    mock/openai/openai-compatible provider 适配
+eventStore.ts          Runtime 事件类型和事件写入
+executionEngine.ts     执行 run/step 状态记录
+types.ts              核心状态、LLM、Runtime 类型定义
+tools/import-agency-agents.ts  agency-agents markdown 模板导入工具
+src/client/app.ts      前端交互逻辑源码，构建后生成 public/app.js
 public/index.html      前端页面结构
 public/styles.css      前端样式
 data/state.json        本地运行数据

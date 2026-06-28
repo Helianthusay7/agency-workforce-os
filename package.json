@@ -4,11 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
-    "import:agency-agents": "node tools/import-agency-agents.js"
+    "start": "node dist/server.js",
+    "dev": "npm run build && node dist/server.js",
+    "build": "tsc && tsc -p tsconfig.client.json",
+    "check": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "import:agency-agents": "npm run build && node dist/tools/import-agency-agents.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "typescript": "^6.0.3"
   }
 }

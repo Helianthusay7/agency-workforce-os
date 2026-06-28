@@ -1,6 +1,50 @@
+import type { AgentTemplate, Employee, LlmResult, Project, RuntimeError, Task } from "./types.js";
+
 const ARTIFACT_TYPES = new Set(["code", "doc", "plan", "analysis"]);
 
-function artifactTypeFor(template, task) {
+type ParsedJson = Record<string, unknown>;
+
+export interface RuntimeParsedOutput {
+  type: string;
+  content: string;
+  meta: {
+    agentId: string;
+    taskId: string;
+  };
+  summary: string;
+  deliverables: string[];
+  decisions: string[];
+  risks: string[];
+  nextActions: string[];
+  parseStatus: "parsed";
+}
+
+export interface AgentRuntimeResult {
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  prompt: string;
+  llmResult: LlmResult;
+  rawOutput: string;
+  parsedOutput: RuntimeParsedOutput;
+}
+
+export interface RunAgentRuntimeInput {
+  task: Task;
+  agent: Employee;
+  template?: AgentTemplate;
+  project?: Project;
+  callLlm: (
+    prompt: string,
+    task: Task,
+    agent: Employee,
+    template?: AgentTemplate,
+    project?: Project
+  ) => Promise<LlmResult>;
+  now: () => string;
+}
+
+function artifactTypeFor(template: AgentTemplate | undefined, task: Task): string {
   const text = `${template?.name || ""} ${template?.division || ""} ${task.title} ${task.description || ""}`.toLowerCase();
   if (/code|developer|engineer|frontend|backend|implementation|代码|实现/.test(text)) return "code";
   if (/analysis|review|risk|research|分析|审查|风险|调研/.test(text)) return "analysis";
@@ -8,47 +52,57 @@ function artifactTypeFor(template, task) {
   return "doc";
 }
 
-function parseJsonOutput(rawOutput) {
+function parseJsonOutput(rawOutput: string): ParsedJson {
   try {
-    return JSON.parse(rawOutput);
-  } catch (error) {
-    const runtimeError = new Error("Agent Runtime expected valid JSON output from LLM");
+    return JSON.parse(rawOutput) as ParsedJson;
+  } catch {
+    const runtimeError = new Error("Agent Runtime expected valid JSON output from LLM") as RuntimeError;
     runtimeError.name = "StructuredOutputError";
     runtimeError.llmOutput = rawOutput;
     throw runtimeError;
   }
 }
 
-function requireString(value, field) {
+function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim()) {
-    const error = new Error(`Agent Runtime output is missing required string field: ${field}`);
+    const error = new Error(`Agent Runtime output is missing required string field: ${field}`) as RuntimeError;
     error.name = "StructuredOutputError";
     throw error;
   }
   return value;
 }
 
-function normalizeStringArray(value) {
+function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim());
+  return value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim());
 }
 
-function normalizeStructuredOutput(parsed, task, agent, fallbackType) {
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function normalizeStructuredOutput(
+  parsed: ParsedJson,
+  task: Task,
+  agent: Employee,
+  fallbackType: string
+): RuntimeParsedOutput {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    const error = new Error("Agent Runtime output must be a JSON object");
+    const error = new Error("Agent Runtime output must be a JSON object") as RuntimeError;
     error.name = "StructuredOutputError";
     throw error;
   }
 
-  const meta = parsed.meta && typeof parsed.meta === "object" && !Array.isArray(parsed.meta) ? parsed.meta : {};
-  const output = {
-    type: ARTIFACT_TYPES.has(parsed.type) ? parsed.type : fallbackType,
-    content: requireString(parsed.content, "content"),
+  const meta = objectRecord(parsed.meta);
+  const content = requireString(parsed.content, "content");
+  const output: RuntimeParsedOutput = {
+    type: typeof parsed.type === "string" && ARTIFACT_TYPES.has(parsed.type) ? parsed.type : fallbackType,
+    content,
     meta: {
       agentId: String(meta.agentId || agent.id),
       taskId: String(meta.taskId || task.id)
     },
-    summary: typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : requireString(parsed.content, "content").slice(0, 500),
+    summary: typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : content.slice(0, 500),
     deliverables: normalizeStringArray(parsed.deliverables),
     decisions: normalizeStringArray(parsed.decisions),
     risks: normalizeStringArray(parsed.risks),
@@ -57,7 +111,7 @@ function normalizeStructuredOutput(parsed, task, agent, fallbackType) {
   };
 
   if (output.meta.taskId !== task.id || output.meta.agentId !== agent.id) {
-    const error = new Error("Agent Runtime output meta does not match the executed task and agent");
+    const error = new Error("Agent Runtime output meta does not match the executed task and agent") as RuntimeError;
     error.name = "StructuredOutputError";
     throw error;
   }
@@ -65,7 +119,12 @@ function normalizeStructuredOutput(parsed, task, agent, fallbackType) {
   return output;
 }
 
-export function buildRuntimePrompt({ task, agent, template, project }) {
+export function buildRuntimePrompt({ task, agent, template, project }: {
+  task: Task;
+  agent: Employee;
+  template?: AgentTemplate;
+  project?: Project;
+}): string {
   return [
     "You are an AI workforce employee executing a task inside AI Workforce OS.",
     "Return only valid JSON. Do not wrap it in markdown. Do not return plain text.",
@@ -104,10 +163,10 @@ export function buildRuntimePrompt({ task, agent, template, project }) {
   ].join("\n");
 }
 
-export async function runAgentRuntime({ task, agent, template, project, callLlm, now }) {
+export async function runAgentRuntime({ task, agent, template, project, callLlm, now }: RunAgentRuntimeInput): Promise<AgentRuntimeResult> {
   const startedAt = now();
   const prompt = buildRuntimePrompt({ task, agent, template, project });
-  let llmResult;
+  let llmResult: LlmResult | undefined;
   try {
     llmResult = await callLlm(prompt, task, agent, template, project);
     const rawOutput = String(llmResult.output || "");
@@ -124,7 +183,8 @@ export async function runAgentRuntime({ task, agent, template, project, callLlm,
       rawOutput,
       parsedOutput
     };
-  } catch (error) {
+  } catch (caught) {
+    const error = caught as RuntimeError;
     error.prompt = prompt;
     error.llmOutput = error.llmOutput || llmResult?.output || "";
     error.provider = error.provider || llmResult?.provider;

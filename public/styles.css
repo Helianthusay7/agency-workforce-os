@@ -223,6 +223,7 @@ h1 {
     "projects agents"
     "tasks approvals"
     "tasks artifacts"
+    "tasks tools"
     "tasks members"
     "tasks templates"
     "tasks logs";
@@ -249,6 +250,7 @@ h1 {
 .task-panel { grid-area: tasks; min-height: 620px; }
 .approval-panel { grid-area: approvals; }
 .artifact-panel { grid-area: artifacts; }
+.tool-panel { grid-area: tools; }
 .member-panel { grid-area: members; }
 .template-panel { grid-area: templates; }
 
@@ -276,6 +278,7 @@ h1 {
   grid-template-columns: minmax(0, 1fr) 420px;
   grid-template-areas:
     "approvals artifacts"
+    "tools tools"
     "logs logs";
 }
 
@@ -389,6 +392,7 @@ textarea { resize: vertical; padding: 9px; font-size: 13px; }
 .employee-card,
 .approval-card,
 .artifact-card,
+.tool-card,
 .log-row {
   padding: 11px;
   border: 1px solid var(--line);
@@ -425,6 +429,7 @@ textarea { resize: vertical; padding: 9px; font-size: 13px; }
 .employee-card p,
 .approval-card p,
 .artifact-card p,
+.tool-card p,
 .log-row p {
   margin-bottom: 0;
   color: var(--muted);
@@ -485,6 +490,7 @@ textarea { resize: vertical; padding: 9px; font-size: 13px; }
 .task-actions button { flex: 1 1 120px; }
 
 .artifact-card strong,
+.tool-card strong,
 .member-card strong,
 .template-card strong {
   display: block;
@@ -494,6 +500,7 @@ textarea { resize: vertical; padding: 9px; font-size: 13px; }
 }
 
 .artifact-card small,
+.tool-card small,
 .log-row small,
 .member-card span,
 .member-card small,
@@ -523,6 +530,34 @@ textarea { resize: vertical; padding: 9px; font-size: 13px; }
 
 .filter-group { display: flex; gap: 8px; align-items: center; }
 .filter-group select { min-width: 130px; }
+
+.app-toast {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 60;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 11px 13px;
+  border: 1px solid #bfdbfe;
+  border-radius: 7px;
+  color: #1e3a8a;
+  background: #eff6ff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.app-toast[data-tone="success"] {
+  color: #166534;
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.app-toast[data-tone="warning"] {
+  color: #92400e;
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
 
 .modal {
   width: min(520px, calc(100vw - 24px));
@@ -669,6 +704,7 @@ label {
       "agents"
       "approvals"
       "artifacts"
+      "tools"
       "members"
       "templates"
       "logs";
@@ -742,4 +778,26 @@ label {
 
 .employee-config-form {
   margin-top: 9px;
+}
+
+
+.tool-list {
+  display: grid;
+  gap: 8px;
+}
+
+.tool-card {
+  display: grid;
+  gap: 6px;
+}
+
+.tool-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tool-card p {
+  overflow-wrap: anywhere;
 }

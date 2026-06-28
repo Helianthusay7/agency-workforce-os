@@ -1,19 +1,40 @@
-function defaultTimeoutMs(provider) {
+import type { AgentTemplate, Employee, LlmConfig, LlmResult, Project, RuntimeError, Task } from "./types.js";
+
+interface ResolvedLlmConfig {
+  provider: string;
+  model: string;
+  keyRef: string;
+  baseUrl: string;
+  temperature: number;
+  timeoutMs: number;
+  allowMockFallback: boolean;
+}
+
+interface ProviderMetadata {
+  requestedProvider?: string;
+  model?: string;
+  keyRef?: string;
+  baseUrl?: string;
+  fallback?: boolean;
+  fallbackReason?: string;
+}
+
+function defaultTimeoutMs(provider: string): number {
   return provider === "mock" ? 6000 : 30000;
 }
-function numberOrDefault(value, fallback) {
+function numberOrDefault(value: unknown, fallback: number): number {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 }
 
-function boolOrDefault(value, fallback) {
+function boolOrDefault(value: unknown, fallback: boolean): boolean {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") return value.toLowerCase() !== "false";
   return fallback;
 }
 
-function resolveAgentLlmConfig(agent) {
-  const employeeConfig = agent.llmConfig && typeof agent.llmConfig === "object" ? agent.llmConfig : {};
+function resolveAgentLlmConfig(agent: Employee): ResolvedLlmConfig {
+  const employeeConfig: LlmConfig = agent.llmConfig && typeof agent.llmConfig === "object" ? agent.llmConfig : {};
   const provider = String(employeeConfig.provider || process.env.AGENCY_LLM_PROVIDER || "mock").toLowerCase();
   const keyRef = employeeConfig.keyRef || employeeConfig.apiKeyEnv || (provider === "mock" ? "" : "OPENAI_API_KEY");
 
@@ -28,28 +49,56 @@ function resolveAgentLlmConfig(agent) {
   };
 }
 
-function extractOpenAiText(payload) {
-  if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function payloadErrorMessage(payload: Record<string, unknown>): string | undefined {
+  const error = asRecord(payload.error);
+  return typeof error.message === "string" ? error.message : undefined;
+}
+
+function payloadId(payload: Record<string, unknown>): string | null {
+  return typeof payload.id === "string" ? payload.id : null;
+}
+
+function extractOpenAiText(payload: Record<string, unknown>): string {
+  if (typeof payload.output_text === "string" && payload.output_text.trim()) {
     return payload.output_text;
   }
 
-  const chunks = [];
-  for (const item of payload?.output || []) {
-    for (const content of item.content || []) {
-      if (typeof content.text === "string") chunks.push(content.text);
+  const chunks: string[] = [];
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  for (const item of output) {
+    const itemRecord = asRecord(item);
+    const contentItems = Array.isArray(itemRecord.content) ? itemRecord.content : [];
+    for (const content of contentItems) {
+      const contentRecord = asRecord(content);
+      if (typeof contentRecord.text === "string") chunks.push(contentRecord.text);
     }
   }
   return chunks.join("\n").trim();
 }
 
-function extractChatText(payload) {
-  return String(payload?.choices?.[0]?.message?.content || "").trim();
+function extractChatText(payload: Record<string, unknown>): string {
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  const firstChoice = asRecord(choices[0]);
+  const message = asRecord(firstChoice.message);
+  return String(message.content || "").trim();
 }
 
-function mockOutput(prompt, task, agent, template, project) {
+function mockOutput(prompt: string, task: Task, agent: Employee, template?: AgentTemplate, project?: Project): string {
   const deliverables = template?.deliverables?.length ? template.deliverables.join("、") : "执行结果";
+  const intent = `${template?.name || ""} ${template?.division || ""} ${task.title || ""} ${task.description || ""}`.toLowerCase();
+  const artifactType = /code|developer|engineer|frontend|backend|implementation|html|javascript|css|源码|代码|实现|页面/.test(intent)
+    ? "code"
+    : /analysis|review|risk|research|分析|审查|风险|调研/.test(intent)
+      ? "analysis"
+      : /plan|manager|strategy|roadmap|计划|规划|拆解/.test(intent)
+        ? "plan"
+        : "doc";
   return JSON.stringify({
-    type: "plan",
+    type: artifactType,
     meta: {
       agentId: agent.id,
       taskId: task.id
@@ -70,7 +119,15 @@ function mockOutput(prompt, task, agent, template, project) {
   });
 }
 
-function runMockAdapter(prompt, task, agent, template, project, config, metadata = {}) {
+function runMockAdapter(
+  prompt: string,
+  task: Task,
+  agent: Employee,
+  template: AgentTemplate | undefined,
+  project: Project | undefined,
+  config: ResolvedLlmConfig,
+  metadata: ProviderMetadata = {}
+): LlmResult {
   return {
     provider: "mock",
     requestedProvider: metadata.requestedProvider || config.provider || "mock",
@@ -84,14 +141,15 @@ function runMockAdapter(prompt, task, agent, template, project, config, metadata
   };
 }
 
-async function fetchJsonWithTimeout(url, request, timeoutMs) {
+async function fetchJsonWithTimeout(url: string, request: RequestInit, timeoutMs: number): Promise<{ response: Response; payload: Record<string, unknown> }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, { ...request, signal: controller.signal });
     const payload = await response.json().catch(() => ({}));
     return { response, payload };
-  } catch (error) {
+  } catch (caught) {
+    const error = caught as Error;
     if (error.name === "AbortError") {
       throw new Error(`LLM request timed out after ${timeoutMs}ms`);
     }
@@ -101,15 +159,22 @@ async function fetchJsonWithTimeout(url, request, timeoutMs) {
   }
 }
 
-function missingKeyError(config) {
-  const error = new Error(`${config.keyRef || "API key"} is not configured`);
+function missingKeyError(config: ResolvedLlmConfig): never {
+  const error = new Error(`${config.keyRef || "API key"} is not configured`) as RuntimeError;
   error.provider = config.provider;
   error.model = config.model;
   error.keyRef = config.keyRef || "";
   throw error;
 }
 
-async function runOpenAiResponsesAdapter(prompt, task, agent, template, project, config) {
+async function runOpenAiResponsesAdapter(
+  prompt: string,
+  task: Task,
+  agent: Employee,
+  template: AgentTemplate | undefined,
+  project: Project | undefined,
+  config: ResolvedLlmConfig
+): Promise<LlmResult> {
   const apiKey = config.keyRef ? process.env[config.keyRef] : "";
   if (!apiKey) missingKeyError(config);
 
@@ -128,7 +193,7 @@ async function runOpenAiResponsesAdapter(prompt, task, agent, template, project,
   }, config.timeoutMs);
 
   if (!response.ok) {
-    const error = new Error(payload?.error?.message || `OpenAI request failed with HTTP ${response.status}`);
+    const error = new Error(payloadErrorMessage(payload) || `OpenAI request failed with HTTP ${response.status}`) as RuntimeError;
     error.provider = config.provider;
     error.model = config.model;
     error.keyRef = config.keyRef;
@@ -137,7 +202,7 @@ async function runOpenAiResponsesAdapter(prompt, task, agent, template, project,
 
   const output = extractOpenAiText(payload);
   if (!output) {
-    const error = new Error("OpenAI response did not contain text output");
+    const error = new Error("OpenAI response did not contain text output") as RuntimeError;
     error.provider = config.provider;
     error.model = config.model;
     error.keyRef = config.keyRef;
@@ -153,11 +218,18 @@ async function runOpenAiResponsesAdapter(prompt, task, agent, template, project,
     output,
     fallback: false,
     fallbackReason: "",
-    responseId: payload.id || null
+    responseId: payloadId(payload)
   };
 }
 
-async function runOpenAiCompatibleChatAdapter(prompt, task, agent, template, project, config) {
+async function runOpenAiCompatibleChatAdapter(
+  prompt: string,
+  task: Task,
+  agent: Employee,
+  template: AgentTemplate | undefined,
+  project: Project | undefined,
+  config: ResolvedLlmConfig
+): Promise<LlmResult> {
   const apiKey = config.keyRef ? process.env[config.keyRef] : "";
   if (!apiKey) missingKeyError(config);
 
@@ -176,7 +248,7 @@ async function runOpenAiCompatibleChatAdapter(prompt, task, agent, template, pro
   }, config.timeoutMs);
 
   if (!response.ok) {
-    const error = new Error(payload?.error?.message || `OpenAI-compatible request failed with HTTP ${response.status}`);
+    const error = new Error(payloadErrorMessage(payload) || `OpenAI-compatible request failed with HTTP ${response.status}`) as RuntimeError;
     error.provider = config.provider;
     error.model = config.model;
     error.keyRef = config.keyRef;
@@ -185,7 +257,7 @@ async function runOpenAiCompatibleChatAdapter(prompt, task, agent, template, pro
 
   const output = extractChatText(payload);
   if (!output) {
-    const error = new Error("OpenAI-compatible response did not contain message content");
+    const error = new Error("OpenAI-compatible response did not contain message content") as RuntimeError;
     error.provider = config.provider;
     error.model = config.model;
     error.keyRef = config.keyRef;
@@ -201,11 +273,17 @@ async function runOpenAiCompatibleChatAdapter(prompt, task, agent, template, pro
     output,
     fallback: false,
     fallbackReason: "",
-    responseId: payload.id || null
+    responseId: payloadId(payload)
   };
 }
 
-export async function runAgentLlm(prompt, task, agent, template, project) {
+export async function runAgentLlm(
+  prompt: string,
+  task: Task,
+  agent: Employee,
+  template?: AgentTemplate,
+  project?: Project
+): Promise<LlmResult> {
   const config = resolveAgentLlmConfig(agent);
   try {
     if (config.provider === "mock") {
@@ -217,12 +295,13 @@ export async function runAgentLlm(prompt, task, agent, template, project) {
     if (config.provider === "openai-compatible") {
       return await runOpenAiCompatibleChatAdapter(prompt, task, agent, template, project, config);
     }
-    const error = new Error(`Unsupported LLM provider: ${config.provider}`);
+    const error = new Error(`Unsupported LLM provider: ${config.provider}`) as RuntimeError;
     error.provider = config.provider;
     error.model = config.model;
     error.keyRef = config.keyRef;
     throw error;
-  } catch (error) {
+  } catch (caught) {
+    const error = caught as RuntimeError;
     if (config.allowMockFallback && config.provider !== "mock") {
       return runMockAdapter(prompt, task, agent, template, project, config, {
         requestedProvider: config.provider,

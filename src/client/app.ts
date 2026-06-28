@@ -6,7 +6,8 @@ const state = {
   employeeTemplateSearch: "",
   currentView: "dashboard",
   selectedTaskId: null,
-  editingEmployeeId: null
+  editingEmployeeId: null,
+  notificationTimer: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -49,6 +50,24 @@ function setHtml(element, markup) {
   if (!element) return;
   innerHtmlDescriptor.set.call(element, sanitizeHtml(markup));
 }
+function notify(message, tone = "info") {
+  const toast = $("#app-toast");
+  if (!toast) return;
+  toast.textContent = message;
+  toast.dataset.tone = tone;
+  toast.hidden = false;
+  window.clearTimeout(state.notificationTimer);
+  state.notificationTimer = window.setTimeout(() => {
+    toast.hidden = true;
+  }, 5200);
+}
+
+function approvalNotice(result) {
+  if (result?.status !== "waiting_approval" || !result.approval) return null;
+  return result.reused
+    ? `已有待处理审批单：${result.approval.title}`
+    : `AI 已自动创建审批单：${result.approval.title}`;
+}
 
 function byId(items, id) {
   return items.find((item) => item.id === id);
@@ -83,7 +102,7 @@ function viewConfig(view) {
     approvals: {
       title: "审批",
       showMetrics: false,
-      panels: ["approval-panel", "artifact-panel", "log-panel"]
+      panels: ["approval-panel", "artifact-panel", "tool-panel", "log-panel"]
     }
   };
   return configs[view] || configs.dashboard;
@@ -92,20 +111,22 @@ function viewConfig(view) {
 function renderView() {
   const config = viewConfig(state.currentView);
   const contentGrid = document.querySelector(".content-grid");
-  contentGrid.className = `content-grid view-${state.currentView}`;
+  if (contentGrid instanceof HTMLElement) contentGrid.className = `content-grid view-${state.currentView}`;
 
-  document.querySelector(".topbar h1").textContent = config.title;
-  document.querySelector(".metric-grid").hidden = !config.showMetrics;
+  const title = document.querySelector(".topbar h1");
+  if (title) title.textContent = config.title;
+
+  const metricGrid = document.querySelector(".metric-grid");
+  if (metricGrid instanceof HTMLElement) metricGrid.hidden = !config.showMetrics;
 
   document.querySelectorAll(".content-grid > .panel").forEach((panel) => {
-    panel.hidden = !config.panels.some((className) => panel.classList.contains(className));
+    if (panel instanceof HTMLElement) panel.hidden = !config.panels.some((className) => panel.classList.contains(className));
   });
 
   document.querySelectorAll(".nav-item").forEach((item) => {
-    item.classList.toggle("active", item.dataset.view === state.currentView);
+    if (item instanceof HTMLElement) item.classList.toggle("active", item.dataset.view === state.currentView);
   });
 }
-
 function taskMatchesSearch(task) {
   const query = state.taskSearch.trim().toLowerCase();
   if (!query) return true;
@@ -343,7 +364,7 @@ async function submitQuickDemand(formElement) {
     });
 
     status.textContent = "正在让 AI 员工执行...";
-    await api(`/api/tasks/${task.id}/run`, {
+    const runResult = await api(`/api/tasks/${task.id}/run`, {
       method: "POST",
       body: JSON.stringify({})
     });
@@ -352,7 +373,13 @@ async function submitQuickDemand(formElement) {
     state.currentView = "tasks";
     await load();
     openDrawer(task.id);
-    status.textContent = "已生成交付物，请查看右侧任务详情。";
+    const notice = approvalNotice(runResult);
+    if (notice) {
+      status.textContent = "AI 已自动创建审批单，请到审批区处理。";
+      notify(notice, "warning");
+    } else {
+      status.textContent = "已生成交付物，请查看右侧任务详情。";
+    }
   } catch (error) {
     status.textContent = error.message || "执行失败，请稍后重试。";
   } finally {
@@ -451,6 +478,34 @@ function taskArtifacts(taskId) {
   return state.data.artifacts.filter((artifact) => artifact.taskId === taskId);
 }
 
+function taskToolInvocations(taskId) {
+  return (state.data.toolInvocations || []).filter((invocation) => invocation.taskId === taskId);
+}
+
+function toolStatusText(status) {
+  const labels = {
+    running: "\u6267\u884c\u4e2d",
+    succeeded: "\u6210\u529f",
+    failed: "\u5931\u8d25"
+  };
+  return labels[status] || status || "\u672a\u77e5";
+}
+
+function toolStatusClass(status) {
+  if (status === "succeeded") return "approved";
+  if (status === "failed") return "rejected";
+  return "pending";
+}
+
+function toolTargetText(invocation) {
+  return invocation?.output?.targetPath || invocation?.input?.targetPath || invocation?.input?.path || "\u672a\u8bb0\u5f55\u76ee\u6807";
+}
+
+function toolBytesText(invocation) {
+  const value = invocation?.output?.bytesWritten ?? invocation?.output?.contentBytes ?? invocation?.input?.contentBytes;
+  return value === undefined || value === null ? "\u672a\u8bb0\u5f55\u5b57\u8282" : String(value) + " \u5b57\u8282";
+}
+
 function taskSignoffs(task) {
   return Array.isArray(task?.signoffs) ? task.signoffs : [];
 }
@@ -513,6 +568,7 @@ function renderDrawer() {
   const approvals = taskApprovals(task.id);
   const signoffs = taskSignoffs(task);
   const artifacts = taskArtifacts(task.id);
+  const toolInvocations = taskToolInvocations(task.id);
   const logs = taskLogs(task.id);
   const chatMessages = taskChatMessages(task.id);
   const employees = task.assignedEmployeeIds.map((employeeId) => byId(state.data.employees, employeeId)).filter(Boolean);
@@ -621,6 +677,18 @@ function renderDrawer() {
         <textarea name="summary" required rows="3" maxlength="260" placeholder="交付物摘要"></textarea>
         <button class="primary-button" type="submit">添加交付物</button>
       </form>
+    </section>
+
+    <section class="detail-section">
+      <h3>\u5de5\u5177\u8c03\u7528</h3>
+      ${toolInvocations.map((invocation) => [
+        '<div class="timeline-row">',
+        '<strong>' + invocation.toolName + ' - ' + toolStatusText(invocation.status) + '</strong>',
+        '<span>' + employeeName(invocation.agentId) + ' - ' + fmtDate(invocation.completedAt || invocation.startedAt) + '</span>',
+        '<span>' + toolTargetText(invocation) + ' - ' + toolBytesText(invocation) + '</span>',
+        invocation.error ? '<span>' + invocation.error.message + '</span>' : '',
+        '</div>'
+      ].join('')).join('') || '<div class="empty">\u8fd8\u6ca1\u6709\u5de5\u5177\u8c03\u7528</div>'}
     </section>
 
     <section class="detail-section">
@@ -871,6 +939,24 @@ function renderArtifacts() {
       .join("") || `<div class="empty">还没有交付物</div>`);
 }
 
+function renderToolInvocations() {
+  const invocations = [...(state.data.toolInvocations || [])].reverse().slice(0, 10);
+  setHtml($("#tool-list"),
+    invocations
+      .map((invocation) => [
+        '<article class="tool-card">',
+        '<div class="tool-card-top">',
+        '<strong>' + invocation.toolName + '</strong>',
+        '<span class="pill ' + toolStatusClass(invocation.status) + '">' + toolStatusText(invocation.status) + '</span>',
+        '</div>',
+        '<p>' + toolTargetText(invocation) + '</p>',
+        '<small>' + employeeName(invocation.agentId) + ' - ' + (byId(state.data.tasks, invocation.taskId)?.title || '\u672a\u77e5\u4efb\u52a1') + ' - ' + toolBytesText(invocation) + ' - ' + fmtDate(invocation.completedAt || invocation.startedAt) + '</small>',
+        invocation.error ? '<p>' + invocation.error.message + '</p>' : '',
+        '</article>'
+      ].join(''))
+      .join('') || '<div class="empty">\u8fd8\u6ca1\u6709\u5de5\u5177\u8c03\u7528</div>');
+}
+
 function renderLogs() {
   setHtml($("#log-list"),
     state.data.auditLogs
@@ -895,6 +981,7 @@ function render() {
   renderEmployees();
   renderApprovals();
   renderArtifacts();
+  renderToolInvocations();
   renderLogs();
   renderView();
 }
@@ -946,12 +1033,14 @@ async function runAgentDiscussion(taskId) {
 }
 
 async function runAgent(taskId) {
-  await api(`/api/tasks/${taskId}/run`, {
+  const result = await api(`/api/tasks/${taskId}/run`, {
     method: "POST",
     body: JSON.stringify({})
   });
   await load();
   if (state.selectedTaskId) renderDrawer();
+  const notice = approvalNotice(result);
+  notify(notice || "AI 员工已完成执行并生成交付物。", notice ? "warning" : "success");
 }
 
 async function updateTaskStatus(taskId, status) {
@@ -971,25 +1060,11 @@ async function signoffTask(taskId, stage) {
   await load();
   if (state.selectedTaskId) renderDrawer();
 }
-async function requestApproval(taskId) {
-  const task = byId(state.data.tasks, taskId);
-  await api(`/api/tasks/${taskId}/approvals`, {
-    method: "POST",
-    body: JSON.stringify({
-      title: `审批请求：${task.title}`,
-      requesterEmployeeId: task.assignedEmployeeIds[0],
-      action: "允许已分配的 AI 员工继续执行，并把写入动作记录到审计日志。",
-      risk: "medium"
-    })
-  });
-  await load();
-  if (state.selectedTaskId) renderDrawer();
-}
-
 function bindEvents() {
   $("#refresh-btn").addEventListener("click", load);
 
   document.querySelectorAll(".nav-item").forEach((item) => {
+    if (!(item instanceof HTMLElement)) return;
     item.addEventListener("click", () => {
       state.currentView = item.dataset.view || "dashboard";
       renderView();
