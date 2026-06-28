@@ -322,13 +322,15 @@ function selectQaEmployee(state: AppState, builder: Employee): Employee | undefi
 function buildQaEvidence(artifact: Artifact, toolInvocations: ToolInvocation[]): Record<string, unknown> {
   const content = String(artifact.content || "");
   const failedToolInvocations = toolInvocations.filter((invocation) => invocation.status === "failed");
+  const incompleteToolInvocations = toolInvocations.filter((invocation) => invocation.status === "waiting_approval" || invocation.status === "running");
   return {
     artifactId: artifact.id,
     artifactType: artifact.type || "unknown",
     contentBytes: Buffer.byteLength(content, "utf8"),
     hasSummary: Boolean(String(artifact.summary || "").trim()),
     toolInvocationIds: toolInvocations.map((invocation) => invocation.id),
-    failedToolInvocationIds: failedToolInvocations.map((invocation) => invocation.id)
+    failedToolInvocationIds: failedToolInvocations.map((invocation) => invocation.id),
+    incompleteToolInvocationIds: incompleteToolInvocations.map((invocation) => invocation.id)
   };
 }
 
@@ -361,17 +363,18 @@ function createAutomaticQaSignoff({
   const evidence = buildQaEvidence(artifact, toolInvocations);
   const contentBytes = Number(evidence.contentBytes || 0);
   const failedToolCount = Array.isArray(evidence.failedToolInvocationIds) ? evidence.failedToolInvocationIds.length : 0;
-  const passed = contentBytes > 0 && failedToolCount === 0;
+  const incompleteToolCount = Array.isArray(evidence.incompleteToolInvocationIds) ? evidence.incompleteToolInvocationIds.length : 0;
+  const passed = contentBytes > 0 && failedToolCount === 0 && incompleteToolCount === 0;
   const signoff: TaskSignoff = {
     id: createId("sig"),
     taskId: task.id,
     stage: "qa",
-    stageLabel: "QA validation",
+    stageLabel: "自动完整性检查",
     employeeId: qaEmployee.id,
     status: passed ? "passed" : "failed",
     note: passed
-      ? "\u81ea\u52a8 QA \u901a\u8fc7\uff1a\u4ea4\u4ed8\u7269\u5df2\u751f\u6210\uff0c\u5de5\u5177\u8c03\u7528\u65e0\u5931\u8d25\u3002"
-      : "\u81ea\u52a8 QA \u672a\u901a\u8fc7\uff1a\u4ea4\u4ed8\u7269\u4e3a\u7a7a\u6216\u5de5\u5177\u8c03\u7528\u5931\u8d25\uff0c\u9700\u8981\u4fee\u590d\u540e\u91cd\u8bd5\u3002",
+      ? "自动完整性检查通过：交付物已生成，工具调用均已完成且无失败。"
+      : "自动完整性检查未通过：交付物为空，或仍有工具调用待审批/执行中/失败。",
     createdAt: now(),
     artifactId: artifact.id,
     automatic: true,

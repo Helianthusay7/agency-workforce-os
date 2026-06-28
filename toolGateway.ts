@@ -1,4 +1,5 @@
 import { copyFile, mkdir, rename, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { AppState, Artifact, Clock, Employee, IdFactory, RuntimeError, Task, ToolInvocation } from "./types.js";
@@ -38,7 +39,11 @@ function configuredAllowedRoots(): string[] {
 }
 
 function normalizeFsPath(value: string): string {
-  return path.resolve(value.trim().replace(/[??;?,s]+$/g, ""));
+  return path.resolve(value.trim().replace(/[\s\u3002\uff1b;\uff0c,]+$/g, ""));
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 function isWithinRoot(targetPath: string, rootPath: string): boolean {
@@ -97,14 +102,8 @@ function buildPendingActions(artifact: Artifact): PendingToolAction[] {
   return actions;
 }
 
-function latestArtifactContent(state: AppState, invocation: ToolInvocation): string {
-  const artifact = state.artifacts.find((item) => item.id === invocation.artifactId);
-  if (!artifact) throw runtimeError("Tool artifact not found", 404);
-  return String(artifact.content || "");
-}
-
 function approvalTitle(targetPath: string): string {
-  return `???????${path.basename(targetPath)}`;
+  return `工具写入审批：${path.basename(targetPath)}`;
 }
 
 function ensureAuditLogs(state: AppState): void {
@@ -134,7 +133,9 @@ export async function executeArtifactToolActions({ state, task, agent, artifact,
       artifactId: artifact.id,
       input: {
         targetPath,
+        content: action.content,
         contentBytes: Buffer.byteLength(action.content, "utf8"),
+        contentSha256: sha256(action.content),
         approvalRequired: true
       },
       output: null,
@@ -152,7 +153,7 @@ export async function executeArtifactToolActions({ state, task, agent, artifact,
       reviewerUserId: task.ownerUserId,
       status: "pending",
       risk: "high",
-      action: `??????? filesystem.writeArtifact ???${targetPath}`,
+      action: `允许工作站工具 filesystem.writeArtifact 写入：${targetPath}`,
       createdAt: startedAt,
       kind: "tool_action",
       toolInvocationId: invocation.id,
@@ -190,8 +191,10 @@ export async function executeApprovedToolInvocation({ state, approvalId, createI
 
   const targetPath = assertWritablePath(String(invocation.input.targetPath || ""));
   const artifact = state.artifacts.find((item) => item.id === invocation.artifactId);
-  const content = typeof invocation.input.content === "string" ? String(invocation.input.content) : latestArtifactContent(state, invocation);
-  if (!content.trim()) throw runtimeError("Tool artifact content is empty", 400);
+  const content = typeof invocation.input.content === "string" ? String(invocation.input.content) : "";
+  if (!content.trim()) throw runtimeError("Tool invocation content snapshot is empty", 400);
+  const expectedHash = typeof invocation.input.contentSha256 === "string" ? invocation.input.contentSha256 : "";
+  if (expectedHash && sha256(content) !== expectedHash) throw runtimeError("Tool invocation content hash mismatch", 409);
 
   invocation.status = "running";
   invocation.input.approvedAt = now();
@@ -222,7 +225,7 @@ export async function executeApprovedToolInvocation({ state, approvalId, createI
       actorId: invocation.agentId,
       event: "executed_tool_action",
       targetId: invocation.id,
-      detail: `filesystem.writeArtifact ???${targetPath}`,
+      detail: `filesystem.writeArtifact 写入：${targetPath}`,
       createdAt: now()
     });
   } catch (caught) {

@@ -484,7 +484,7 @@ function taskToolInvocations(taskId) {
 
 function toolStatusText(status) {
   const labels = {
-    waiting_approval: "???",
+    waiting_approval: "待审批",
     running: "\u6267\u884c\u4e2d",
     succeeded: "\u6210\u529f",
     failed: "\u5931\u8d25"
