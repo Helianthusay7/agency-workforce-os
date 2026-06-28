@@ -45,7 +45,7 @@ function resolveAgentLlmConfig(agent: Employee): ResolvedLlmConfig {
     baseUrl: employeeConfig.baseUrl || process.env.AGENCY_LLM_BASE_URL || "",
     temperature: numberOrDefault(employeeConfig.temperature ?? process.env.AGENCY_LLM_TEMPERATURE, 0.2),
     timeoutMs: numberOrDefault(employeeConfig.timeoutMs ?? process.env.AGENCY_LLM_TIMEOUT_MS, defaultTimeoutMs(provider)),
-    allowMockFallback: boolOrDefault(employeeConfig.allowMockFallback ?? process.env.AGENCY_LLM_ALLOW_MOCK_FALLBACK, true)
+    allowMockFallback: boolOrDefault(employeeConfig.allowMockFallback ?? process.env.AGENCY_LLM_ALLOW_MOCK_FALLBACK, provider === "mock")
   };
 }
 

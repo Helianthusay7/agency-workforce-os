@@ -1,5 +1,5 @@
 import http from "node:http";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ const publicDir = path.join(appRoot, "public");
 const dataDir = path.join(appRoot, "data");
 const stateFile = path.join(dataDir, "state.json");
 const port = Number(process.env.PORT || 4173);
+const maxJsonBodyBytes = Number(process.env.AGENCY_MAX_BODY_BYTES || 2 * 1024 * 1024);
 const now = () => new Date().toISOString();
 const id = (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
 const DEFAULT_LLM_MODEL = "gpt-5.4-mini";
@@ -490,8 +491,24 @@ async function loadState() {
     const raw = await readFile(stateFile, "utf8");
     return JSON.parse(raw);
 }
+let stateWriteSequence = 0;
+let stateMutationQueue = Promise.resolve();
+
 async function saveState(state) {
-    await writeFile(stateFile, JSON.stringify(state, null, 2), "utf8");
+    await mkdir(dataDir, { recursive: true });
+    const tempFile = path.join(dataDir, ".state." + process.pid + "." + Date.now() + "." + stateWriteSequence++ + ".tmp");
+    await writeFile(tempFile, JSON.stringify(state, null, 2), "utf8");
+    await rename(tempFile, stateFile);
+}
+
+function enqueueStateMutation(operation) {
+    const run = stateMutationQueue.then(operation, operation);
+    stateMutationQueue = run.catch(() => undefined);
+    return run;
+}
+
+function isMutatingApiRequest(req) {
+    return req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS";
 }
 function sendJson(res, status, payload) {
     const body = JSON.stringify(payload);
@@ -505,9 +522,24 @@ function notFound(res) {
     sendJson(res, 404, { error: "Not found" });
 }
 async function readBody(req) {
+    const declaredLength = Number(req.headers["content-length"] || 0);
+    if (declaredLength > maxJsonBodyBytes) {
+        const err = new Error("Request body exceeds " + maxJsonBodyBytes + " bytes");
+        err.status = 413;
+        throw err;
+    }
     const chunks = [];
-    for await (const chunk of req)
-        chunks.push(chunk);
+    let totalBytes = 0;
+    for await (const chunk of req) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        totalBytes += buffer.length;
+        if (totalBytes > maxJsonBodyBytes) {
+            const err = new Error("Request body exceeds " + maxJsonBodyBytes + " bytes");
+            err.status = 413;
+            throw err;
+        }
+        chunks.push(buffer);
+    }
     const raw = Buffer.concat(chunks).toString("utf8");
     if (!raw)
         return {};
@@ -1218,6 +1250,13 @@ function normalizePermissionValue(permission) {
     return aliases[value] || "Suggest";
 }
 async function handleApi(req, res, url) {
+    if (isMutatingApiRequest(req)) {
+        return enqueueStateMutation(() => handleApiUnlocked(req, res, url));
+    }
+    return handleApiUnlocked(req, res, url);
+}
+
+async function handleApiUnlocked(req, res, url) {
     const state = await loadState();
     const pathname = url.pathname;
     ensureBusinessSkillState(state);
