@@ -435,30 +435,30 @@ function closeModal(button) {
 }
 
 function taskActionButtons(task) {
+  const actions = [
+    `<button class="secondary-button danger-button" type="button" data-delete-task="${task.id}">删除任务</button>`
+  ];
   if (task.status === "done") {
-    return "";
+    return `<div class="task-actions">${actions.join("")}</div>`;
   }
 
-  const actions = [];
   if (task.status === "todo") {
-    actions.push(`<button class="secondary-button" data-run-task="${task.id}">开始任务</button>`);
+    actions.push(`<button class="secondary-button" type="button" data-run-task="${task.id}">开始任务</button>`);
   }
   if (task.status === "implemented") {
-    actions.push(`<button class="secondary-button" data-signoff-task="${task.id}" data-signoff-stage="qa">人工 QA 签名</button>`);
+    actions.push(`<button class="secondary-button" type="button" data-signoff-task="${task.id}" data-signoff-stage="qa">人工 QA 签名</button>`);
   }
   if (task.status === "tested") {
-    actions.push(`<button class="secondary-button" data-signoff-task="${task.id}" data-signoff-stage="review">审核签名</button>`);
+    actions.push(`<button class="secondary-button" type="button" data-signoff-task="${task.id}" data-signoff-stage="review">审核签名</button>`);
   }
   if (task.status === "reviewed") {
-    actions.push(`<button class="secondary-button" data-signoff-task="${task.id}" data-signoff-stage="product">产品批准</button>`);
+    actions.push(`<button class="secondary-button" type="button" data-signoff-task="${task.id}" data-signoff-stage="product">产品批准</button>`);
   }
   if (task.status === "approved") {
-    actions.push(`<button class="secondary-button" data-signoff-task="${task.id}" data-signoff-stage="release">发布完成</button>`);
+    actions.push(`<button class="secondary-button" type="button" data-signoff-task="${task.id}" data-signoff-stage="release">发布完成</button>`);
   }
   return `<div class="task-actions">${actions.join("")}</div>`;
 }
-
-
 
 
 
@@ -996,7 +996,7 @@ function renderWorkPanel() {
         </select>
       </label>
       <button class="primary-button" type="button" data-work-run="${task.id}" ${employee ? "" : "disabled"}>让该员工执行</button>
-      <button class="secondary-button" type="button" data-work-delete="${task.id}">删除任务</button>
+      <button class="secondary-button danger-button" type="button" data-work-delete="${task.id}">删除任务</button>
       <button class="secondary-button" type="button" data-work-refresh>刷新</button>
     </div>
 
@@ -1494,6 +1494,20 @@ function bindEvents() {
   });
 
 
+  document.body.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) return;
+    if (target.id === "work-task-select") {
+      state.selectedWorkTaskId = target.value;
+      state.selectedWorkEmployeeId = null;
+      renderWorkPanel();
+    }
+    if (target.id === "work-employee-select") {
+      state.selectedWorkEmployeeId = target.value;
+      renderWorkPanel();
+    }
+  });
+
   document.body.addEventListener("submit", async (event) => {
     const formElement = event.target;
     if (!(formElement instanceof HTMLFormElement)) return;
@@ -1578,20 +1592,24 @@ function bindEvents() {
       return;
     }
 
-    const breakdownTaskId = target.dataset.breakdownTask;
-    const agentDiscussTask = target.dataset.agentDiscuss;
-    const agentRunTask = target.dataset.agentRun;
-    const runTask = target.dataset.runTask;
-    const doneTask = target.dataset.doneTask;
-    const signoffTaskId = target.dataset.signoffTask;
-    const signoffStage = target.dataset.signoffStage;
-    const deleteTaskId = target.dataset.deleteTask;
-    const editEmployeeId = target.dataset.editEmployee;
-    const workRunTask = target.dataset.workRun;
-    const workDeleteTask = target.dataset.workDelete;
-    const workRefresh = target.dataset.workRefresh !== undefined;
-    const approveId = target.dataset.approve;
-    const rejectId = target.dataset.reject;
+    const closestData = (selector, key) => {
+      const element = target.closest(selector);
+      return element instanceof HTMLElement ? element.dataset[key] : undefined;
+    };
+    const breakdownTaskId = closestData("[data-breakdown-task]", "breakdownTask");
+    const agentDiscussTask = closestData("[data-agent-discuss]", "agentDiscuss");
+    const agentRunTask = closestData("[data-agent-run]", "agentRun");
+    const runTask = closestData("[data-run-task]", "runTask");
+    const doneTask = closestData("[data-done-task]", "doneTask");
+    const signoffTaskId = closestData("[data-signoff-task]", "signoffTask");
+    const signoffStage = closestData("[data-signoff-task]", "signoffStage");
+    const deleteTaskId = closestData("[data-delete-task]", "deleteTask");
+    const editEmployeeId = closestData("[data-edit-employee]", "editEmployee");
+    const workRunTask = closestData("[data-work-run]", "workRun");
+    const workDeleteTask = closestData("[data-work-delete]", "workDelete");
+    const workRefresh = target.closest("[data-work-refresh]") instanceof HTMLElement;
+    const approveId = closestData("[data-approve]", "approve");
+    const rejectId = closestData("[data-reject]", "reject");
 
     if (breakdownTaskId) await breakdownTask(breakdownTaskId);
     if (agentDiscussTask) await runAgentDiscussion(agentDiscussTask);
@@ -1600,6 +1618,12 @@ function bindEvents() {
     if (doneTask) await updateTaskStatus(doneTask, "done");
     if (signoffTaskId) await signoffTask(signoffTaskId, signoffStage);
     if (deleteTaskId) await deleteTask(deleteTaskId);
+    if (workRunTask) await runAgent(workRunTask, state.selectedWorkEmployeeId || "");
+    if (workDeleteTask) await deleteTask(workDeleteTask);
+    if (workRefresh) {
+      await load();
+      renderWorkPanel();
+    }
     if (editEmployeeId) {
       state.editingEmployeeId = state.editingEmployeeId === editEmployeeId ? null : editEmployeeId;
       renderEmployees();
