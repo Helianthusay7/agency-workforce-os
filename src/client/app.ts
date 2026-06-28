@@ -425,7 +425,7 @@ function taskActionButtons(task) {
     actions.push(`<button class="secondary-button" data-run-task="${task.id}">开始任务</button>`);
   }
   if (task.status === "implemented") {
-    actions.push(`<button class="secondary-button" data-signoff-task="${task.id}" data-signoff-stage="qa">QA 签名</button>`);
+    actions.push(`<button class="secondary-button" data-signoff-task="${task.id}" data-signoff-stage="qa">人工 QA 签名</button>`);
   }
   if (task.status === "tested") {
     actions.push(`<button class="secondary-button" data-signoff-task="${task.id}" data-signoff-stage="review">审核签名</button>`);
@@ -513,7 +513,7 @@ function taskSignoffs(task) {
 
 function signoffStageText(stage) {
   const labels = {
-    qa: "QA 验证",
+    qa: "人工 QA 验证",
     review: "独立审核",
     product: "产品验收",
     release: "发布门禁"
@@ -660,7 +660,7 @@ function renderDrawer() {
     <section class="detail-section">
       <h3>治理签名</h3>
       ${signoffs.map((signoff) => `<div class="timeline-row">
-        <strong>${signoffStageText(signoff.stage)} · ${signoffStatusText(signoff.status)}</strong>
+        <strong>${signoff.stageLabel || signoffStageText(signoff.stage)} - ${signoffStatusText(signoff.status)}</strong>
         <span>${employeeName(signoff.employeeId)} · ${fmtDate(signoff.createdAt)}</span>
         <span>${signoff.note || "无备注"}</span>
       </div>`).join("") || `<div class="empty">还没有治理签名记录</div>`}
