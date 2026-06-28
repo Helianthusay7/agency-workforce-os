@@ -222,6 +222,7 @@ h1 {
     "onboarding onboarding"
     "projects agents"
     "tasks approvals"
+    "tasks work"
     "tasks artifacts"
     "tasks tools"
     "tasks members"
@@ -249,6 +250,7 @@ h1 {
 .employee-panel { grid-area: agents; }
 .task-panel { grid-area: tasks; min-height: 620px; }
 .approval-panel { grid-area: approvals; }
+.work-panel { grid-area: work; }
 .artifact-panel { grid-area: artifacts; }
 .tool-panel { grid-area: tools; }
 .member-panel { grid-area: members; }
@@ -280,6 +282,11 @@ h1 {
     "approvals artifacts"
     "tools tools"
     "logs logs";
+}
+
+.content-grid.view-work {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "work";
 }
 
 .panel-header {
@@ -377,7 +384,8 @@ textarea { resize: vertical; padding: 9px; font-size: 13px; }
 .employee-list,
 .approval-list,
 .artifact-list,
-.log-list {
+.log-list,
+.work-panel-body {
   display: grid;
   gap: 8px;
   padding: 10px;
@@ -850,3 +858,126 @@ label {
 }
 
 [hidden] { display: none !important; }
+
+
+.work-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.3fr) minmax(180px, 0.8fr) auto auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+}
+
+.work-controls label { min-width: 0; }
+
+.work-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.work-summary-card {
+  min-height: 66px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfbfc;
+}
+
+.work-summary-card span { display: block; color: var(--muted); font-size: 12px; }
+.work-summary-card strong { display: block; margin-top: 6px; font-size: 22px; line-height: 1; }
+
+.work-focus {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.work-focus h3 { margin-bottom: 6px; font-size: 15px; }
+.work-focus p,
+.work-agent-card span,
+.work-alert span { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+.work-agent-card {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfbfc;
+}
+
+.work-agent-card strong,
+.work-alert strong { font-size: 13px; }
+
+.work-alert {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid #fecaca;
+  border-radius: 7px;
+  color: #991b1b;
+  background: #fef2f2;
+}
+
+.work-stream {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.compact-panel-header { padding: 10px 12px; }
+.work-timeline { display: grid; gap: 0; padding: 8px 12px 12px; }
+
+.work-event {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 9px;
+  padding: 8px 0;
+}
+
+.work-event-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #2563eb;
+  box-shadow: 0 0 0 4px #eff6ff;
+}
+
+.work-event.failed .work-event-dot { background: #dc2626; box-shadow: 0 0 0 4px #fef2f2; }
+.work-event.succeeded .work-event-dot { background: #16a34a; box-shadow: 0 0 0 4px #f0fdf4; }
+.work-event.waiting .work-event-dot { background: #4f46e5; box-shadow: 0 0 0 4px #eef2ff; }
+
+.work-event-body {
+  min-width: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.work-event:last-child .work-event-body { border-bottom: 0; }
+
+.work-event-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.work-event-top strong { font-size: 13px; }
+.work-event-top span,
+.work-event-body small,
+.work-event-body p { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.work-event-body p { margin: 5px 0 0; overflow-wrap: anywhere; }
+
+@media (max-width: 980px) {
+  .work-controls,
+  .work-focus,
+  .work-summary-grid { grid-template-columns: 1fr; }
+}

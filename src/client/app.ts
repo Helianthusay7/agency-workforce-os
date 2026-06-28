@@ -6,6 +6,8 @@ const state = {
   employeeTemplateSearch: "",
   currentView: "dashboard",
   selectedTaskId: null,
+  selectedWorkTaskId: null,
+  selectedWorkEmployeeId: null,
   editingEmployeeId: null,
   notificationTimer: null
 };
@@ -115,6 +117,11 @@ function viewConfig(view) {
       title: "审批",
       showMetrics: false,
       panels: ["approval-panel", "artifact-panel", "tool-panel", "log-panel"]
+    },
+    work: {
+      title: "任务进行",
+      showMetrics: false,
+      panels: ["work-panel"]
     }
   };
   return configs[view] || configs.dashboard;
@@ -841,6 +848,205 @@ function renderFilters() {
     .join(""));
 }
 
+
+function taskExecutionTraces(taskId) {
+  return (state.data.executionTraces || []).filter((trace) => trace.taskId === taskId);
+}
+
+function taskExecutionRuns(taskId) {
+  return (state.data.executionRuns || []).filter((run) => run.taskId === taskId);
+}
+
+function taskWorkItems(task, employeeId) {
+  const taskId = task.id;
+  const matchesAgent = (agentId) => !employeeId || !agentId || agentId === employeeId;
+  const items = [];
+
+  for (const trace of taskExecutionTraces(taskId).filter((trace) => matchesAgent(trace.agentId))) {
+    items.push({
+      time: trace.completedAt || trace.startedAt || "",
+      type: "trace",
+      status: trace.status,
+      title: "Agent Runtime " + (trace.status === "succeeded" ? "执行成功" : "执行失败"),
+      actor: employeeName(trace.agentId),
+      detail: trace.error?.message || trace.finalArtifact?.summary || trace.parsedOutput?.summary || trace.fallbackReason || "",
+      meta: [trace.provider, trace.model, trace.keyRef].filter(Boolean).join(" / ")
+    });
+  }
+
+  for (const run of taskExecutionRuns(taskId).filter((run) => matchesAgent(run.agentId))) {
+    items.push({
+      time: run.completedAt || run.startedAt || "",
+      type: "run",
+      status: run.status,
+      title: "执行引擎：" + (run.currentStep || run.status),
+      actor: employeeName(run.agentId),
+      detail: run.error?.message || (run.steps || []).map((step) => step.name + ":" + step.status).join(" -> "),
+      meta: (run.artifactIds || []).length + " 个产物"
+    });
+  }
+
+  for (const invocation of taskToolInvocations(taskId).filter((invocation) => matchesAgent(invocation.agentId))) {
+    items.push({
+      time: invocation.completedAt || invocation.startedAt || "",
+      type: "tool",
+      status: invocation.status,
+      title: "工具调用：" + invocation.toolName,
+      actor: employeeName(invocation.agentId),
+      detail: toolTargetText(invocation) + " · " + toolBytesText(invocation) + (invocation.error ? " · " + invocation.error.message : ""),
+      meta: toolStatusText(invocation.status)
+    });
+  }
+
+  for (const artifact of taskArtifacts(taskId).filter((artifact) => matchesAgent(artifact.createdBy))) {
+    items.push({
+      time: artifact.updatedAt || artifact.timestamp || "",
+      type: "artifact",
+      status: "succeeded",
+      title: "产物：" + artifact.title,
+      actor: employeeName(artifact.createdBy),
+      detail: artifact.summary || artifact.content || "",
+      meta: artifact.type || "artifact"
+    });
+  }
+
+  for (const message of taskChatMessages(taskId).filter((message) => !employeeId || message.actorId === employeeId || message.actorType !== "agent")) {
+    items.push({
+      time: message.createdAt || "",
+      type: "chat",
+      status: "running",
+      title: "讨论：" + actorName(message),
+      actor: actorName(message),
+      detail: message.content || "",
+      meta: message.actorType === "agent" ? "AI 发言" : "用户备注"
+    });
+  }
+
+  for (const log of taskLogs(taskId).filter((log) => matchesAgent(log.actorType === "agent" ? log.actorId : ""))) {
+    items.push({
+      time: log.createdAt || "",
+      type: "log",
+      status: log.event?.includes("failed") ? "failed" : "succeeded",
+      title: "日志：" + log.event,
+      actor: log.actorType === "agent" ? employeeName(log.actorId) : userName(log.actorId),
+      detail: log.detail || "",
+      meta: fmtDate(log.createdAt)
+    });
+  }
+
+  return items.sort((a, b) => String(b.time || "").localeCompare(String(a.time || "")));
+}
+
+function workStatusClass(status) {
+  if (status === "succeeded" || status === "done" || status === "approved") return "succeeded";
+  if (status === "failed" || status === "rejected") return "failed";
+  if (status === "waiting_approval") return "waiting";
+  return "running";
+}
+
+function workTaskOptions() {
+  return [...state.data.tasks].sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
+function selectedWorkTask() {
+  const tasks = workTaskOptions();
+  if (!tasks.length) return null;
+  if (!state.selectedWorkTaskId || !byId(tasks, state.selectedWorkTaskId)) {
+    state.selectedWorkTaskId = tasks.find((task) => task.status !== "done")?.id || tasks[0].id;
+  }
+  return byId(tasks, state.selectedWorkTaskId);
+}
+
+function selectedWorkEmployee(task) {
+  const employees = (task?.assignedEmployeeIds || []).map((employeeId) => byId(state.data.employees, employeeId)).filter(Boolean);
+  if (!employees.length) return null;
+  if (!state.selectedWorkEmployeeId || !employees.some((employee) => employee.id === state.selectedWorkEmployeeId)) {
+    state.selectedWorkEmployeeId = employees[0].id;
+  }
+  return byId(employees, state.selectedWorkEmployeeId);
+}
+
+function renderWorkPanel() {
+  const target = $("#work-panel-body");
+  if (!target) return;
+  const tasks = workTaskOptions();
+  const task = selectedWorkTask();
+  if (!task) {
+    setHtml(target, '<div class="empty">还没有任务</div>');
+    return;
+  }
+  const employees = task.assignedEmployeeIds.map((employeeId) => byId(state.data.employees, employeeId)).filter(Boolean);
+  const employee = selectedWorkEmployee(task);
+  const traces = taskExecutionTraces(task.id).filter((trace) => !employee || trace.agentId === employee.id);
+  const artifacts = taskArtifacts(task.id).filter((artifact) => !employee || artifact.createdBy === employee.id);
+  const tools = taskToolInvocations(task.id).filter((invocation) => !employee || invocation.agentId === employee.id);
+  const workItems = taskWorkItems(task, employee?.id);
+  const latestFailure = workItems.find((item) => item.status === "failed");
+
+  setHtml(target, `
+    <div class="work-controls">
+      <label>任务
+        <select id="work-task-select">
+          ${tasks.map((item) => `<option value="${item.id}" ${item.id === task.id ? "selected" : ""}>${item.title}</option>`).join("")}
+        </select>
+      </label>
+      <label>AI 员工
+        <select id="work-employee-select" ${employees.length ? "" : "disabled"}>
+          ${employees.map((item) => `<option value="${item.id}" ${employee?.id === item.id ? "selected" : ""}>${item.displayName} · ${item.title}</option>`).join("") || '<option>未分配</option>'}
+        </select>
+      </label>
+      <button class="primary-button" type="button" data-work-run="${task.id}" ${employee ? "" : "disabled"}>让该员工执行</button>
+      <button class="secondary-button" type="button" data-work-refresh>刷新</button>
+    </div>
+
+    <div class="work-summary-grid">
+      <article class="work-summary-card"><span>任务状态</span><strong>${statusText(task.status)}</strong></article>
+      <article class="work-summary-card"><span>执行记录</span><strong>${traces.length}</strong></article>
+      <article class="work-summary-card"><span>产物</span><strong>${artifacts.length}</strong></article>
+      <article class="work-summary-card"><span>工具调用</span><strong>${tools.length}</strong></article>
+    </div>
+
+    <section class="work-focus">
+      <div>
+        <p class="eyebrow">当前任务</p>
+        <h3>${task.title}</h3>
+        <p>${task.description || "暂无描述"}</p>
+      </div>
+      <div class="work-agent-card">
+        <strong>${employee ? employee.displayName + " · " + employee.title : "未选择 AI 员工"}</strong>
+        <span>${employee ? teamName(employee.teamId) + " · " + employee.permission : "请先给任务分配 AI 员工"}</span>
+        <span>${employee?.llmConfig?.provider || state.data.currentUser?.llmConfig?.provider || "openai-compatible"} · ${employee?.llmConfig?.model || state.data.currentUser?.llmConfig?.model || employee?.model || ""}</span>
+      </div>
+    </section>
+
+    ${latestFailure ? `<div class="work-alert"><strong>最近失败</strong><span>${latestFailure.detail}</span></div>` : ""}
+
+    <section class="work-stream">
+      <div class="panel-header compact-panel-header">
+        <div>
+          <h2>AI 工作面板</h2>
+          <p>这里按时间显示该员工的讨论、执行、工具调用、产物和失败原因。</p>
+        </div>
+      </div>
+      <div class="work-timeline">
+        ${workItems.map((item) => `
+          <article class="work-event ${workStatusClass(item.status)}">
+            <div class="work-event-dot"></div>
+            <div class="work-event-body">
+              <div class="work-event-top">
+                <strong>${item.title}</strong>
+                <span>${fmtDate(item.time)}</span>
+              </div>
+              <small>${item.actor} · ${item.meta || item.type}</small>
+              <p>${item.detail || "暂无细节"}</p>
+            </div>
+          </article>
+        `).join("") || '<div class="empty">还没有 AI 工作记录。选择员工后点击“让该员工执行”。</div>'}
+      </div>
+    </section>
+  `);
+}
+
 function renderTasks() {
   const tasks = state.data.tasks.filter((task) => {
     const projectMatches = state.selectedProjectId === "all" || task.projectId === state.selectedProjectId;
@@ -996,6 +1202,7 @@ function render() {
   renderMembers();
   renderTemplates();
   renderTasks();
+  renderWorkPanel();
   renderEmployees();
   renderApprovals();
   renderArtifacts();
@@ -1101,10 +1308,10 @@ async function runAgentDiscussion(taskId) {
   if (state.selectedTaskId) renderDrawer();
 }
 
-async function runAgent(taskId) {
+async function runAgent(taskId, employeeId = "") {
   const result = await api(`/api/tasks/${taskId}/run`, {
     method: "POST",
-    body: JSON.stringify({})
+    body: JSON.stringify(employeeId ? { employeeId } : {})
   });
   await load();
   if (state.selectedTaskId) renderDrawer();
@@ -1360,6 +1567,8 @@ function bindEvents() {
     const signoffTaskId = target.dataset.signoffTask;
     const signoffStage = target.dataset.signoffStage;
     const editEmployeeId = target.dataset.editEmployee;
+    const workRunTask = target.dataset.workRun;
+    const workRefresh = target.dataset.workRefresh !== undefined;
     const approveId = target.dataset.approve;
     const rejectId = target.dataset.reject;
 
