@@ -1457,6 +1457,285 @@ function buildDiscussionMessage(task, employee, template, project, index) {
     const focus = template?.deliverables?.[index % Math.max(template.deliverables.length, 1)] || "下一步交付";
     return `${employee.displayName}（${role}）：我建议围绕“${task.title}”先推进 ${focus}。当前项目是 ${project?.name || "未知项目"}，需要保持最小改动、明确交付物，并把需要人工确认的动作进入审批。`;
 }
+
+function bestManagerEmployee(state, userId, task) {
+    const employees = ownedEmployees(state, userId);
+    return employees.find((employee) => task.assignedEmployeeIds.includes(employee.id) && employee.templateId === "tpl_pm")
+        || employees.find((employee) => employee.templateId === "tpl_pm")
+        || employees.find((employee) => task.assignedEmployeeIds.includes(employee.id))
+        || employees[0]
+        || null;
+}
+function preferredAutomationEmployeeIds(state, userId, input) {
+    const rawText = String((input?.title || "") + " " + (input?.description || ""));
+    const text = rawText.toLowerCase();
+    const title = String(input?.title || "");
+    const employees = ownedEmployees(state, userId);
+    const selected = [];
+    const addByTemplates = (...templateIds) => {
+        for (const templateId of templateIds) {
+            const employee = employees.find((item) => item.templateId === templateId);
+            if (employee && !selected.includes(employee.id)) selected.push(employee.id);
+        }
+    };
+    if (/^审查|^检查|^验证|^测试/.test(title)) {
+        addByTemplates("tpl_product_reviewer", "tpl_pm", "tpl_reviewer", "tpl_qa");
+        return selected;
+    }
+    if (/^产出|^输出|^撰写|^整理/.test(title)) {
+        if (/代码|源码|页面|前端|后端|组件|开发/.test(text)) addByTemplates("tpl_builder", "tpl_frontend", "tpl_architect");
+        addByTemplates("tpl_product_reviewer", "tpl_pm");
+        return selected;
+    }
+    if (/^设计|^规划/.test(title)) {
+        addByTemplates("tpl_pm", "tpl_architect");
+        return selected;
+    }
+    if (/^明确|^定义|^梳理/.test(title)) {
+        addByTemplates("tpl_pm", "tpl_product_reviewer");
+        return selected;
+    }
+    if (/审查|测试|qa|风险|回归|验证/.test(text)) addByTemplates("tpl_product_reviewer", "tpl_pm", "tpl_reviewer", "tpl_qa");
+    if (/代码|源码|页面|前端|后端|组件|开发/.test(text)) addByTemplates("tpl_builder", "tpl_frontend", "tpl_architect");
+    if (/设计|架构|流程|接口|系统|边界|数据/.test(text)) addByTemplates("tpl_pm", "tpl_architect");
+    if (/目标|需求|范围|产品|mvp|验收标准|计划|方案|交付物/.test(text)) addByTemplates("tpl_pm", "tpl_product_reviewer");
+    return selected;
+}
+function assignBestEmployeesForTask(state, userId, task, input, fallbackEmployee) {
+    const userEmployeeIds = new Set(ownedEmployees(state, userId).map((employee) => employee.id));
+    const preferred = preferredAutomationEmployeeIds(state, userId, input).filter((employeeId) => userEmployeeIds.has(employeeId));
+    const selected = (preferred.length ? preferred : autoAssignEmployees(workspaceSlice(state, userId), input).filter((employeeId) => userEmployeeIds.has(employeeId)));
+    if (!selected.length && fallbackEmployee?.id) selected.push(fallbackEmployee.id);
+    task.assignedEmployeeIds = [...new Set(selected)].slice(0, 3);
+    task.assignmentMode = "auto";
+    task.assignedBy = "ai_dispatcher";
+    assignEmployeesToTask(workspaceSlice(state, userId), task, task.assignedEmployeeIds, 6);
+    return task.assignedEmployeeIds;
+}
+function taskArtifactsForTask(state, taskId) {
+    return (state.artifacts || []).filter((artifact) => artifact.taskId === taskId);
+}
+function automationSummaryForTask(state, taskId) {
+    return (state.artifacts || []).find((artifact) => artifact.taskId === taskId && artifact.type === "automation_summary");
+}
+function sanitizeAutomationPlanningText(value) {
+    return String(value || "")
+        .replace(/代码/g, "方案")
+        .replace(/源码/g, "方案")
+        .replace(/实现/g, "落实")
+        .replace(/开发/g, "制作")
+        .replace(/前端/g, "界面")
+        .replace(/后端/g, "服务")
+        .replace(/页面/g, "界面")
+        .replace(/code|developer|engineer|frontend|backend|implementation|html|javascript|css/gi, "plan");
+}
+function createOrReuseSubtasksForAutomation(state, userId, parentTask, manager) {
+    const existing = ownedTasks(state, userId).filter((task) => task.parentTaskId === parentTask.id);
+    if (existing.length) return { subtasks: existing, reused: true };
+    const project = ownedProjects(state, userId).find((item) => item.id === parentTask.projectId);
+    const specs = buildSubtasks(parentTask, project).slice(0, 4);
+    const subtasks = specs.map((spec, index) => {
+        const task = {
+            id: id("task"),
+            parentTaskId: parentTask.id,
+            title: sanitizeAutomationPlanningText(spec.title),
+            projectId: parentTask.projectId,
+            ownerUserId: parentTask.ownerUserId,
+            status: "todo",
+            priority: index === 0 ? parentTask.priority : "P2",
+            description: sanitizeAutomationPlanningText(spec.description) + "\n自动化执行约束：本轮先输出可审阅的文档、计划或分析产物，暂不生成工程文件。",
+            assignedEmployeeIds: [],
+            assignmentMode: "auto",
+            assignedBy: "ai_dispatcher",
+            dueDate: parentTask.dueDate || "",
+            createdAt: now()
+        };
+        assignBestEmployeesForTask(state, userId, task, task, manager);
+        return task;
+    });
+    state.tasks.unshift(...subtasks);
+    return { subtasks, reused: false };
+}
+function canRunWithoutApprovalForAutomation(employee) {
+    const permission = String(employee?.permission || "").trim().toLowerCase();
+    return permission !== "read only" && permission !== "execute with approval";
+}
+function selectAutomationRunner(state, userId, task, fallbackEmployee) {
+    const assigned = task.assignedEmployeeIds
+        .map((employeeId) => findOwnedEmployee(state, userId, employeeId))
+        .filter(Boolean);
+    return assigned.find(canRunWithoutApprovalForAutomation)
+        || (fallbackEmployee && canRunWithoutApprovalForAutomation(fallbackEmployee) ? fallbackEmployee : null)
+        || assigned[0]
+        || fallbackEmployee
+        || null;
+}
+async function runAutomationStep(state, currentUser, currentUserId, task, employeeId) {
+    try {
+        const result = await orchestrateTask(state, task.id, {
+            requestedAgentId: employeeId,
+            createId: id,
+            now,
+            callLlm: (prompt, task, agent, template, project) => runAgentLlm(prompt, task, withUserLlmConfig(currentUser, agent), template, project)
+        });
+        addLog(state, {
+            actorType: "agent",
+            actorId: result.agent.id,
+            ownerUserId: currentUserId,
+            event: "ran_agent_runtime",
+            targetId: result.task.id,
+            detail: result.agent.displayName + " 自动执行任务并生成交付物：" + result.artifact.title + "，trace=" + result.executionTrace.id
+        });
+        addLog(state, {
+            actorType: "agent",
+            actorId: result.agent.id,
+            ownerUserId: currentUserId,
+            event: "created_artifact",
+            targetId: result.artifact.id,
+            detail: "创建交付物：" + result.artifact.title
+        });
+        return { status: "succeeded", task: result.task, agent: result.agent, artifact: result.artifact, executionTrace: result.executionTrace };
+    }
+    catch (error) {
+        if (isApprovalRequiredError(error)) {
+            const agent = findTaskAgent(workspaceSlice(state, currentUserId), task, employeeId);
+            if (agent) {
+                const approvalResult = createExecutionApproval(state, task, agent, error.message);
+                return { status: "waiting_approval", task, agent, approval: approvalResult.approval, reused: approvalResult.reused, error: error.message, executionTrace: error.executionTrace };
+            }
+        }
+        addLog(state, {
+            actorType: "agent",
+            actorId: error.executionTrace?.agentId || employeeId || null,
+            ownerUserId: currentUserId,
+            event: "failed_agent_runtime",
+            targetId: task.id,
+            detail: "自动执行失败：" + (error.message || "Unknown error") + "，trace=" + (error.executionTrace?.id || "none")
+        });
+        return { status: "failed", task, error: error.message || "Agent Runtime execution failed", executionTrace: error.executionTrace };
+    }
+}
+function upsertAutomationSummaryArtifact(state, currentUserId, parentTask, manager, subtasks, results) {
+    const lines = [];
+    lines.push("# 自动交付汇总：" + parentTask.title);
+    lines.push("");
+    lines.push("总管 AI：" + (manager?.displayName || "AI 总管"));
+    lines.push("完成子任务：" + results.filter((item) => item.status === "succeeded" || item.status === "reused").length + "/" + subtasks.length);
+    lines.push("");
+    lines.push("## 子任务分工与产出");
+    for (const subtask of subtasks) {
+        const assignees = subtask.assignedEmployeeIds.map((employeeId) => ownedEmployees(state, currentUserId).find((employee) => employee.id === employeeId)?.displayName || employeeId).join("、") || "未分配";
+        const artifacts = taskArtifactsForTask(state, subtask.id);
+        lines.push("- " + subtask.title);
+        lines.push("  - 负责员工：" + assignees);
+        lines.push("  - 当前状态：" + subtask.status);
+        lines.push("  - 交付物：" + (artifacts.map((artifact) => artifact.title).join("、") || "暂无"));
+    }
+    const statusSet = new Set(results.map((item) => item.status));
+    const finalStatus = statusSet.has("failed") ? "partial" : (statusSet.has("waiting_approval") ? "waiting_approval" : "completed");
+    lines.push("");
+    lines.push(finalStatus === "completed" ? "## 结论\n自动工作流已完成，产物可进入人工验收。" : "## 结论\n自动工作流未完全完成，请处理审批或失败项后继续。");
+    const summary = lines.join("\n");
+    const existing = automationSummaryForTask(state, parentTask.id);
+    if (existing) {
+        existing.title = "自动交付汇总：" + parentTask.title;
+        existing.summary = summary;
+        existing.content = summary;
+        existing.updatedAt = now();
+        existing.createdBy = manager?.id || parentTask.ownerUserId;
+        return existing;
+    }
+    const artifact = {
+        id: id("art"),
+        taskId: parentTask.id,
+        type: "automation_summary",
+        title: "自动交付汇总：" + parentTask.title,
+        createdBy: manager?.id || parentTask.ownerUserId,
+        updatedAt: now(),
+        summary,
+        content: summary
+    };
+    state.artifacts.unshift(artifact);
+    return artifact;
+}
+async function automateOwnedTask(state, currentUser, currentUserId, taskId) {
+    ensureRuntimeState(state);
+    ensureExecutionState(state);
+    const parentTask = findOwnedTask(state, currentUserId, taskId);
+    if (!parentTask) return null;
+    const manager = bestManagerEmployee(state, currentUserId, parentTask);
+    if (!parentTask.assignedEmployeeIds?.length) {
+        assignBestEmployeesForTask(state, currentUserId, parentTask, parentTask, manager);
+    }
+    else if (manager?.id && !parentTask.assignedEmployeeIds.includes(manager.id)) {
+        parentTask.assignedEmployeeIds = [manager.id, ...parentTask.assignedEmployeeIds].slice(0, 4);
+    }
+    addLog(state, {
+        actorType: "agent",
+        actorId: manager?.id || "ai_dispatcher",
+        ownerUserId: currentUserId,
+        event: "automation_started",
+        targetId: parentTask.id,
+        detail: "总管 AI 开始自动处理任务：" + parentTask.title
+    });
+    let managerRun = null;
+    if (manager) {
+        const originalTitle = parentTask.title;
+        const originalDescription = parentTask.description;
+        parentTask.title = "总管规划：" + sanitizeAutomationPlanningText(originalTitle);
+        parentTask.description = sanitizeAutomationPlanningText(originalDescription) + "\n请总管 AI 输出任务拆解、岗位分工、验收标准和风险清单。";
+        try {
+            managerRun = await runAutomationStep(state, currentUser, currentUserId, parentTask, manager.id);
+        }
+        finally {
+            parentTask.title = originalTitle;
+            parentTask.description = originalDescription;
+        }
+    }
+    const subtaskResult = createOrReuseSubtasksForAutomation(state, currentUserId, parentTask, manager);
+    const subtasks = subtaskResult.subtasks;
+    for (const subtask of subtasks) {
+        if (!subtask.assignedEmployeeIds?.length) assignBestEmployeesForTask(state, currentUserId, subtask, subtask, manager);
+    }
+    const results = [];
+    for (const subtask of subtasks) {
+        const existingArtifacts = taskArtifactsForTask(state, subtask.id);
+        if (existingArtifacts.length && ["implemented", "tested", "reviewed", "approved", "done", "review"].includes(String(subtask.status))) {
+            results.push({ status: "reused", task: subtask, artifact: existingArtifacts[0] });
+            continue;
+        }
+        const runner = selectAutomationRunner(state, currentUserId, subtask, manager);
+        const result = await runAutomationStep(state, currentUser, currentUserId, subtask, runner?.id || "");
+        results.push(result);
+        if (result.status === "waiting_approval") break;
+    }
+    const summaryArtifact = upsertAutomationSummaryArtifact(state, currentUserId, parentTask, manager, subtasks, results);
+    if (results.some((item) => item.status === "waiting_approval")) {
+        parentTask.status = "waiting_approval";
+    }
+    else {
+        parentTask.status = "review";
+    }
+    addLog(state, {
+        actorType: "agent",
+        actorId: manager?.id || "ai_dispatcher",
+        ownerUserId: currentUserId,
+        event: "automation_completed",
+        targetId: parentTask.id,
+        detail: "总管 AI 完成自动工作流：" + parentTask.title + "，子任务 " + subtasks.length + " 个，汇总产物 " + summaryArtifact.id
+    });
+    return {
+        status: parentTask.status === "waiting_approval" ? "waiting_approval" : (results.some((item) => item.status === "failed") ? "partial" : "completed"),
+        parentTask,
+        manager,
+        managerRun,
+        subtasks,
+        reusedSubtasks: subtaskResult.reused,
+        results,
+        summaryArtifact
+    };
+}
+
 function deriveDashboard(state) {
     const activeTasks = state.tasks.filter((task) => task.status !== "done").length;
     const pendingApprovals = state.approvals.filter((approval) => approval.status === "pending").length;
@@ -2016,6 +2295,15 @@ async function handleApiUnlocked(req, res, url) {
         });
         await saveState(state);
         sendJson(res, 201, { room, messages, artifact });
+        return;
+    }
+
+    const taskAutomateMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/automate$/);
+    if (req.method === "POST" && taskAutomateMatch) {
+        const result = await automateOwnedTask(state, currentUser, currentUserId, taskAutomateMatch[1]);
+        if (!result) return notFound(res);
+        await saveState(state);
+        sendJson(res, result.status === "waiting_approval" ? 202 : 201, result);
         return;
     }
     const taskRunMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/run$/);

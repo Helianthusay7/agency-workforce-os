@@ -278,6 +278,8 @@ const realTaskLogEvents = new Set([
   "resolved_approval",
   "ran_agent_runtime",
   "failed_agent_runtime",
+  "automation_started",
+  "automation_completed",
   "created_artifact",
   "signed_task_gate"
 ]);
@@ -382,22 +384,28 @@ async function submitQuickDemand(formElement) {
       })
     });
 
-    status.textContent = "正在让 AI 员工执行...";
-    const runResult = await api(`/api/tasks/${task.id}/run`, {
+    status.textContent = "总管 AI 正在拆分、分派并执行任务...";
+    const automationResult = await api(`/api/tasks/${task.id}/automate`, {
       method: "POST",
       body: JSON.stringify({})
     });
 
     formElement.reset();
-    state.currentView = "tasks";
+    state.currentView = "work";
+    state.selectedWorkTaskId = task.id;
+    state.selectedTaskId = task.id;
     await load();
+    renderWorkPanel();
     openDrawer(task.id);
-    const notice = approvalNotice(runResult);
-    if (notice) {
-      status.textContent = "AI 已自动创建审批单，请到审批区处理。";
-      notify(notice, "warning");
+    if (automationResult.status === "waiting_approval") {
+      status.textContent = "自动工作流已暂停：有审批单需要处理。";
+      notify("AI 已自动创建审批单，请到审批区处理。", "warning");
+    } else if (automationResult.status === "partial") {
+      status.textContent = "自动工作流已生成部分产物，请查看任务进行面板。";
+      notify("自动工作流部分完成，请查看失败项或审批项。", "warning");
     } else {
-      status.textContent = "已生成交付物，请查看右侧任务详情。";
+      status.textContent = "总管 AI 已完成分工执行，并生成自动交付汇总。";
+      notify("自动工作流已完成，产物已生成。", "success");
     }
   } catch (error) {
     status.textContent = error.message || "执行失败，请稍后重试。";
@@ -443,6 +451,7 @@ function taskActionButtons(task) {
   }
 
   if (task.status === "todo") {
+    actions.push(`<button class="secondary-button" type="button" data-automate-task="${task.id}">自动处理</button>`);
     actions.push(`<button class="secondary-button" type="button" data-run-task="${task.id}">开始任务</button>`);
   }
   if (task.status === "implemented") {
@@ -1309,6 +1318,24 @@ async function runAgentDiscussion(taskId) {
   if (state.selectedTaskId) renderDrawer();
 }
 
+
+async function automateTask(taskId) {
+  const result = await api(`/api/tasks/${taskId}/automate`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  state.currentView = "work";
+  state.selectedWorkTaskId = taskId;
+  await load();
+  renderWorkPanel();
+  const message = result.status === "waiting_approval"
+    ? "自动工作流已暂停：有审批单需要处理。"
+    : result.status === "partial"
+      ? "自动工作流已生成部分产物，请查看任务进行面板。"
+      : "总管 AI 已完成自动分工执行，并生成交付汇总。";
+  notify(message, result.status === "completed" ? "success" : "warning");
+}
+
 async function runAgent(taskId, employeeId = "") {
   const result = await api(`/api/tasks/${taskId}/run`, {
     method: "POST",
@@ -1600,6 +1627,7 @@ function bindEvents() {
     const agentDiscussTask = closestData("[data-agent-discuss]", "agentDiscuss");
     const agentRunTask = closestData("[data-agent-run]", "agentRun");
     const runTask = closestData("[data-run-task]", "runTask");
+    const automateTaskId = closestData("[data-automate-task]", "automateTask");
     const doneTask = closestData("[data-done-task]", "doneTask");
     const signoffTaskId = closestData("[data-signoff-task]", "signoffTask");
     const signoffStage = closestData("[data-signoff-task]", "signoffStage");
@@ -1614,6 +1642,7 @@ function bindEvents() {
     if (breakdownTaskId) await breakdownTask(breakdownTaskId);
     if (agentDiscussTask) await runAgentDiscussion(agentDiscussTask);
     if (agentRunTask) await runAgent(agentRunTask);
+    if (automateTaskId) await automateTask(automateTaskId);
     if (runTask) await updateTaskStatus(runTask, "running");
     if (doneTask) await updateTaskStatus(doneTask, "done");
     if (signoffTaskId) await signoffTask(signoffTaskId, signoffStage);
