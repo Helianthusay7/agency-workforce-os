@@ -167,6 +167,7 @@ function statusFilterOptions() {
     ["approved", "已批准"],
     ["review", "待审阅"],
     ["waiting_approval", "待审批"],
+    ["failed", "失败"],
     ["done", "已完成"]
   ];
 }

@@ -1604,6 +1604,7 @@ async function runAutomationStep(state, currentUser, currentUserId, task, employ
                 return { status: "waiting_approval", task, agent, approval: approvalResult.approval, reused: approvalResult.reused, error: error.message, executionTrace: error.executionTrace };
             }
         }
+        task.status = "failed";
         addLog(state, {
             actorType: "agent",
             actorId: error.executionTrace?.agentId || employeeId || null,
@@ -1709,9 +1710,15 @@ async function automateOwnedTask(state, currentUser, currentUserId, taskId) {
         results.push(result);
         if (result.status === "waiting_approval") break;
     }
+    const outcomes = [managerRun, ...results].filter(Boolean);
+    const hasWaitingApproval = outcomes.some((item) => item.status === "waiting_approval");
+    const hasFailed = outcomes.some((item) => item.status === "failed");
     const summaryArtifact = upsertAutomationSummaryArtifact(state, currentUserId, parentTask, manager, subtasks, results);
-    if (results.some((item) => item.status === "waiting_approval")) {
+    if (hasWaitingApproval) {
         parentTask.status = "waiting_approval";
+    }
+    else if (hasFailed) {
+        parentTask.status = "failed";
     }
     else {
         parentTask.status = "review";
@@ -1725,7 +1732,7 @@ async function automateOwnedTask(state, currentUser, currentUserId, taskId) {
         detail: "总管 AI 完成自动工作流：" + parentTask.title + "，子任务 " + subtasks.length + " 个，汇总产物 " + summaryArtifact.id
     });
     return {
-        status: parentTask.status === "waiting_approval" ? "waiting_approval" : (results.some((item) => item.status === "failed") ? "partial" : "completed"),
+        status: hasWaitingApproval ? "waiting_approval" : (hasFailed ? "partial" : "completed"),
         parentTask,
         manager,
         managerRun,
