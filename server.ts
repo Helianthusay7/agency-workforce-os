@@ -790,6 +790,49 @@ function withUserLlmConfig(user, agent) {
         llmConfig: userLlmConfigForAgent(user, agent)
     };
 }
+function llmHealthCheckAgentForUser(user) {
+    return withUserLlmConfig(user, {
+        id: "llm_health_check",
+        templateId: "tpl_pm",
+        displayName: "API 健康检查",
+        title: "API 健康检查",
+        model: user?.llmConfig?.model || DEFAULT_LLM_MODEL,
+        permission: "Suggest"
+    });
+}
+async function testUserLlmConfig(user) {
+    const agent = llmHealthCheckAgentForUser(user);
+    const config = agent.llmConfig || {};
+    if (String(config.provider || "").toLowerCase() !== "mock" && !config.apiKey) {
+        const error = new Error("My API 未配置 API Key，请先在 My API 保存可用密钥。") as any;
+        error.status = 400;
+        throw error;
+    }
+    const task = {
+        id: "llm_health_task",
+        title: "API 健康检查",
+        projectId: "health",
+        ownerUserId: user?.id,
+        status: "todo",
+        priority: "P2",
+        description: "请只回复 OK，用于确认模型接口可用。",
+        assignedEmployeeIds: [agent.id],
+        createdAt: now()
+    };
+    const startedAt = Date.now();
+    const result = await runAgentLlm("请只回复 OK。", task, agent, undefined, { id: "health", name: "API 健康检查" });
+    return {
+        ok: true,
+        provider: result.provider,
+        requestedProvider: result.requestedProvider,
+        model: result.model,
+        baseUrl: result.baseUrl,
+        keyRef: result.keyRef,
+        latencyMs: Date.now() - startedAt,
+        responseId: result.responseId || null,
+        sample: String(result.output || "").slice(0, 80)
+    };
+}
 function resourceOwnerId(item, fallbackUserId) {
     return String(item?.ownerUserId || item?.userId || fallbackUserId || "");
 }
@@ -1882,6 +1925,22 @@ async function handleApiUnlocked(req, res, url) {
         sendJson(res, 200, publicUserLlmConfig(currentUser));
         return;
     }
+    if (req.method === "POST" && pathname === "/api/me/llm-config/test") {
+        try {
+            const result = await testUserLlmConfig(currentUser);
+            sendJson(res, 200, result);
+        }
+        catch (error) {
+            sendJson(res, error.status || 502, {
+                ok: false,
+                error: error.message || "My API 测试失败",
+                provider: error.provider || currentUser.llmConfig?.provider || "",
+                model: error.model || currentUser.llmConfig?.model || "",
+                keyRef: error.keyRef || "user_api_key"
+            });
+        }
+        return;
+    }
     if (req.method === "GET" && pathname === "/api/state") {
         ensureChatState(state);
         ensureRuntimeState(state);
@@ -2307,6 +2366,17 @@ async function handleApiUnlocked(req, res, url) {
 
     const taskAutomateMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/automate$/);
     if (req.method === "POST" && taskAutomateMatch) {
+        try {
+            await testUserLlmConfig(currentUser);
+        }
+        catch (error) {
+            sendJson(res, error.status || 502, {
+                error: "My API 不可用，自动化未启动：" + (error.message || "模型接口测试失败"),
+                provider: error.provider || currentUser.llmConfig?.provider || "",
+                model: error.model || currentUser.llmConfig?.model || ""
+            });
+            return;
+        }
         const result = await automateOwnedTask(state, currentUser, currentUserId, taskAutomateMatch[1]);
         if (!result) return notFound(res);
         await saveState(state);

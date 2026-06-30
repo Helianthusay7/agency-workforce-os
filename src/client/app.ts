@@ -371,6 +371,13 @@ async function submitQuickDemand(formElement) {
 
   status.textContent = "正在创建任务...";
   try {
+    status.textContent = "正在测试 My API...";
+    await api("/api/me/llm-config/test", {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+
+    status.textContent = "正在创建任务...";
     const task = await api("/api/tasks", {
       method: "POST",
       body: JSON.stringify({
@@ -1410,20 +1417,30 @@ function bindEvents() {
     event.preventDefault();
     if (!(event.currentTarget instanceof HTMLFormElement)) return;
     const form = new FormData(event.currentTarget);
-    await api("/api/me/llm-config", {
-      method: "PATCH",
-      body: JSON.stringify({
-        provider: form.get("provider"),
-        model: form.get("model"),
-        baseUrl: form.get("baseUrl"),
-        apiKey: form.get("apiKey"),
-        timeoutMs: Number(form.get("timeoutMs") || 0) || undefined,
-        temperature: form.get("temperature") === "" ? undefined : Number(form.get("temperature"))
-      })
-    });
-    const modal = document.getElementById("api-settings-modal");
-    if (modal instanceof HTMLDialogElement) modal.close();
-    await load();
+    try {
+      notify("正在保存并测试 My API...", "info");
+      await api("/api/me/llm-config", {
+        method: "PATCH",
+        body: JSON.stringify({
+          provider: form.get("provider"),
+          model: form.get("model"),
+          baseUrl: form.get("baseUrl"),
+          apiKey: form.get("apiKey"),
+          timeoutMs: Number(form.get("timeoutMs") || 0) || undefined,
+          temperature: form.get("temperature") === "" ? undefined : Number(form.get("temperature"))
+        })
+      });
+      const testResult = await api("/api/me/llm-config/test", {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      const modal = document.getElementById("api-settings-modal");
+      if (modal instanceof HTMLDialogElement) modal.close();
+      await load();
+      notify(`My API 测试通过：${testResult.model || "模型"}，${testResult.latencyMs || 0}ms`, "success");
+    } catch (error) {
+      notify(error.message || "My API 测试失败，请检查 key、baseUrl、模型和额度。", "warning");
+    }
   });
   $("#refresh-btn").addEventListener("click", load);
 
