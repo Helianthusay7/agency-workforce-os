@@ -19,12 +19,33 @@ fn repo_root_for_dev() -> PathBuf {
         .to_path_buf()
 }
 
+fn has_launcher(root: &PathBuf) -> bool {
+    root.join("desktop").join("start-workstation.ps1").exists()
+}
+
 fn app_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+
     if cfg!(debug_assertions) {
-        Ok(repo_root_for_dev())
-    } else {
-        app.path().resource_dir().map_err(|error| error.to_string())
+        candidates.push(repo_root_for_dev());
     }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("_up_"));
+        candidates.push(resource_dir);
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            candidates.push(exe_dir.join("_up_"));
+            candidates.push(exe_dir.to_path_buf());
+        }
+    }
+
+    candidates
+        .into_iter()
+        .find(has_launcher)
+        .ok_or_else(|| "Cannot find bundled desktop/start-workstation.ps1 resources".to_string())
 }
 
 fn wait_until_ready() -> Result<(), String> {
