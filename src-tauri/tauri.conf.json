@@ -1,0 +1,43 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Agency Workforce OS",
+  "version": "0.1.0",
+  "identifier": "com.helianthusay.agencyworkforceos",
+  "build": {
+    "beforeDevCommand": "npm run build",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://127.0.0.1:4173",
+    "frontendDist": "../public"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Agency Workforce OS",
+        "url": "http://127.0.0.1:4173",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 1024,
+        "minHeight": 680,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "../desktop",
+      "../dist",
+      "../public",
+      "../data/state.json",
+      "../package.json",
+      "../package-lock.json"
+    ]
+  }
+}

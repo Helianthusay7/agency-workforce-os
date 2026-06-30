@@ -1,0 +1,17 @@
+[package]
+name = "agency-workforce-os"
+version = "0.1.0"
+description = "Local-first AI workforce desktop app"
+authors = ["Agency Workforce OS"]
+edition = "2021"
+build = "build.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+time = "=0.3.36"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

@@ -9,3 +9,5 @@ data/state.local.json
 data/state.*.local.json
 data/auth.secret.local
 data/agency-workstation.pid
+src-tauri/target/
+src-tauri/gen/

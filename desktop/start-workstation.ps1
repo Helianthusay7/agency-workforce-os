@@ -1,10 +1,14 @@
 param(
-  [switch]$Build
+  [switch]$Build,
+  [switch]$NoBrowser,
+  [string]$DataDir
 )
 
 $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
-$DataDir = Join-Path $Root "data"
+if (!$DataDir) {
+  $DataDir = if ($env:AGENCY_DATA_DIR) { $env:AGENCY_DATA_DIR } else { Join-Path $Root "data" }
+}
 $PidFile = Join-Path $DataDir "agency-workstation.pid"
 $SecretFile = Join-Path $DataDir "auth.secret.local"
 $HostName = if ($env:AGENCY_HOST) { $env:AGENCY_HOST } else { "127.0.0.1" }
@@ -41,6 +45,7 @@ $env:AGENCY_AUTH_SECRET = Get-Content -Raw $SecretFile
 $env:AGENCY_HOST = $HostName
 $env:PORT = [string]$Port
 $env:AGENCY_DESKTOP_MODE = "true"
+$env:AGENCY_STATE_FILE = Join-Path $DataDir "state.local.json"
 
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (!$node) {
@@ -82,7 +87,9 @@ if (!(Test-HttpOk $Url)) {
   }
 }
 
-Start-Process $Url
+if (!$NoBrowser) {
+  Start-Process $Url
+}
 Write-Host "Agency Workforce OS is running at $Url"
-Write-Host "State file: data\state.local.json"
+Write-Host "State file: $env:AGENCY_STATE_FILE"
 Write-Host "Stop it with: npm run desktop:stop"

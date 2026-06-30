@@ -8,6 +8,8 @@
     "dev": "npm run build && node dist/server.js",
     "desktop": "powershell -ExecutionPolicy Bypass -File desktop/start-workstation.ps1",
     "desktop:stop": "powershell -ExecutionPolicy Bypass -File desktop/stop-workstation.ps1",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "build": "tsc && tsc -p tsconfig.client.json",
     "check": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit",
     "import:agency-agents": "npm run build && node dist/tools/import-agency-agents.js"
@@ -16,6 +18,7 @@
     "node": ">=20"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^26.0.1",
     "typescript": "^6.0.3"
   }

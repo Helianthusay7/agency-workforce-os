@@ -29,3 +29,18 @@ npm run desktop:stop
 ```
 
 This is intentionally not the final installer. The next phase can wrap the same UI in Tauri while keeping this local-first execution model.
+## Tauri shell
+
+Run the real desktop shell in development:
+
+```powershell
+npm run tauri:dev
+```
+
+Build a Windows desktop bundle:
+
+```powershell
+npm run tauri:build
+```
+
+The current bundle still starts the local Node service, so Node.js is required on the machine running the app. A later phase can replace the Node service with a bundled sidecar.
