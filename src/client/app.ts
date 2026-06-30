@@ -816,7 +816,7 @@ function renderMembers() {
       <article class="member-card">
         <div>
           <strong>${user.name}</strong>
-          <span>${user.email}</span>
+          <span>${user.username || user.email || user.name}</span>
         </div>
         <span class="pill">${user.role}</span>
         <small>${teamName(user.teamId)}</small>
@@ -844,7 +844,7 @@ function renderChrome() {
   $("#org-plan").textContent = state.data.organization.plan;
   const currentUser = state.data.currentUser;
   const userLabel = $("#current-user-label");
-  if (userLabel) userLabel.textContent = currentUser ? currentUser.email : "";
+  if (userLabel) userLabel.textContent = currentUser ? (currentUser.username || currentUser.email || currentUser.name) : "";
   renderApiConfigLabel();
 
   $("#metric-active-tasks").textContent = state.data.dashboard.activeTasks;
@@ -1269,7 +1269,7 @@ async function submitAuthForm(formElement) {
       method: "POST",
       body: JSON.stringify({
         name: form.get("name"),
-        email: form.get("email"),
+        username: form.get("username"),
         password: form.get("password")
       })
     });
@@ -1442,6 +1442,22 @@ function bindEvents() {
       const nameLabel = document.getElementById("auth-name-label");
       if (nameLabel instanceof HTMLElement) nameLabel.hidden = modeInput instanceof HTMLInputElement && modeInput.value !== "register";
     });
+  });
+  document.getElementById("github-login-btn")?.addEventListener("click", async () => {
+    const status = document.getElementById("auth-status");
+    if (status) status.textContent = "Opening GitHub login...";
+    try {
+      const response = await fetch("/api/auth/github/start", { credentials: "same-origin", headers: { "x-agency-auth-json": "true" } });
+      if (response.redirected) {
+        window.location.href = response.url;
+        return;
+      }
+      if (!response.ok) throw new Error((await response.json()).error || "GitHub login is not configured");
+      const payload = await response.json();
+      if (payload.url) window.location.href = payload.url;
+    } catch (error) {
+      if (status) status.textContent = error.message || "GitHub login is unavailable";
+    }
   });
   document.getElementById("logout-btn")?.addEventListener("click", logout);
   document.getElementById("open-api-settings")?.addEventListener("click", () => {

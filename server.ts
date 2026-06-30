@@ -514,8 +514,9 @@ let stateWriteSequence = 0;
 let stateMutationQueue = Promise.resolve();
 
 async function saveState(state) {
-    await mkdir(dataDir, { recursive: true });
-    const tempFile = path.join(dataDir, ".state." + process.pid + "." + Date.now() + "." + stateWriteSequence++ + ".tmp");
+    const stateDir = path.dirname(stateFile);
+    await mkdir(stateDir, { recursive: true });
+    const tempFile = path.join(stateDir, ".state." + process.pid + "." + Date.now() + "." + stateWriteSequence++ + ".tmp");
     await writeFile(tempFile, JSON.stringify(state, null, 2), "utf8");
     await rename(tempFile, stateFile);
 }
@@ -669,6 +670,24 @@ function sendJsonWithHeaders(res, status, payload, headers = {}) {
 function normalizeEmail(value) {
     return String(value || "").trim().toLowerCase();
 }
+function normalizeUsername(value) {
+    return String(value || "").trim().toLowerCase();
+}
+function usernameValid(value) {
+    return /^[a-z0-9_.-]{3,32}$/.test(normalizeUsername(value));
+}
+const githubStateCookieName = "agency_github_state";
+function githubCookie(value, req) {
+    const secure = requestIsSecure(req) ? "; Secure" : "";
+    return githubStateCookieName + "=" + encodeURIComponent(value) + "; HttpOnly; SameSite=Lax; Path=/; Max-Age=600" + secure;
+}
+function clearGithubCookie() {
+    return githubStateCookieName + "=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+}
+function githubRedirectUri(req) {
+    const proto = requestIsSecure(req) ? "https" : "http";
+    return proto + "://" + String(req.headers.host || "127.0.0.1:" + port) + "/api/auth/github/callback";
+}
 const authRateLimits = new Map();
 function clientIp(req) {
     if (trustProxy) {
@@ -677,8 +696,8 @@ function clientIp(req) {
     }
     return req.socket.remoteAddress || "unknown";
 }
-function assertAuthRateLimit(req, email) {
-    const key = clientIp(req) + ":" + normalizeEmail(email);
+function assertAuthRateLimit(req, identifier) {
+    const key = clientIp(req) + ":" + normalizeUsername(identifier);
     const nowMs = Date.now();
     const existing = authRateLimits.get(key);
     if (!existing || existing.resetAt <= nowMs) {
@@ -739,7 +758,8 @@ function publicUser(user) {
     return {
         id: user.id,
         name: user.name,
-        email: user.email,
+        username: user.username || "",
+        email: user.email || "",
         role: user.role || "Owner",
         teamId: user.teamId || "",
         status: user.status || "active",
@@ -967,6 +987,7 @@ function ensureAuthState(state) {
     const defaultOwnerId = state.users[0].id;
     for (const user of state.users) {
         user.email = normalizeEmail(user.email);
+        user.username = normalizeUsername(user.username || (user.email ? user.email.split("@")[0] : user.name || user.id));
         user.role = user.role || "Owner";
         user.status = user.status || "active";
         if (!user.llmConfig) {
@@ -1063,32 +1084,77 @@ async function handleAuthApi(req, res, pathname, state) {
         sendJsonWithHeaders(res, 200, { ok: true }, { "set-cookie": clearSessionCookie() });
         return true;
     }
-    if (req.method === "POST" && (pathname === "/api/auth/login" || pathname === "/api/auth/register")) {
-        const body = await readBody(req);
-        const email = normalizeEmail(body.email);
-        const password = String(body.password || "");
-        if (!email || !email.includes("@") || password.length < 8) {
-            sendJson(res, 400, { error: "Email and password with at least 8 characters are required" });
+    if (req.method === "GET" && pathname === "/api/auth/github/start") {
+        const clientId = process.env.GITHUB_CLIENT_ID || "";
+        if (!clientId) {
+            sendJson(res, 501, { error: "GitHub login is not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET first." });
+            return true;
+        }
+        const stateToken = randomBytes(24).toString("base64url");
+        const authUrl = new URL("https://github.com/login/oauth/authorize");
+        authUrl.searchParams.set("client_id", clientId);
+        authUrl.searchParams.set("redirect_uri", githubRedirectUri(req));
+        authUrl.searchParams.set("scope", "read:user user:email");
+        authUrl.searchParams.set("state", stateToken);
+        if (String(req.headers["x-agency-auth-json"] || "") === "true") {
+            sendJsonWithHeaders(res, 200, { url: authUrl.toString() }, { "set-cookie": githubCookie(stateToken, req) });
+        }
+        else {
+            res.writeHead(302, { location: authUrl.toString(), "set-cookie": githubCookie(stateToken, req), "cache-control": "no-store" });
+            res.end();
+        }
+        return true;
+    }
+    if (req.method === "GET" && pathname === "/api/auth/github/callback") {
+        const clientId = process.env.GITHUB_CLIENT_ID || "";
+        const clientSecret = process.env.GITHUB_CLIENT_SECRET || "";
+        const callbackUrl = new URL(req.url || "/", "http://" + String(req.headers.host || "127.0.0.1:" + port));
+        const code = callbackUrl.searchParams.get("code") || "";
+        const stateToken = callbackUrl.searchParams.get("state") || "";
+        const cookieState = parseCookies(req)[githubStateCookieName] || "";
+        if (!clientId || !clientSecret || !code || !stateToken || stateToken !== cookieState) {
+            sendJsonWithHeaders(res, 400, { error: "GitHub login failed or is not fully configured." }, { "set-cookie": clearGithubCookie() });
             return true;
         }
         try {
-            assertAuthRateLimit(req, email);
-        }
-        catch (error) {
-            sendJson(res, error.status || 429, { error: error.message || "Too many login attempts" });
-            return true;
-        }
-        let user = state.users.find((item) => normalizeEmail(item.email) === email);
-        if (pathname === "/api/auth/register") {
-            if (user) {
-                sendJson(res, 409, { error: "This email is already registered" });
-                return true;
+            const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
+                method: "POST",
+                headers: { accept: "application/json", "content-type": "application/json" },
+                body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code, redirect_uri: githubRedirectUri(req) })
+            });
+            const tokenPayload = await tokenResponse.json();
+            const accessToken = tokenPayload.access_token;
+            if (!accessToken) throw new Error(tokenPayload.error_description || "GitHub token exchange failed");
+            const userResponse = await fetch("https://api.github.com/user", {
+                headers: { authorization: "Bearer " + accessToken, accept: "application/vnd.github+json", "user-agent": "Agency-Workforce-OS" }
+            });
+            const githubUser = await userResponse.json();
+            if (!githubUser?.id || !githubUser?.login) throw new Error("GitHub user profile is invalid");
+            let email = normalizeEmail(githubUser.email || "");
+            if (!email) {
+                const emailResponse = await fetch("https://api.github.com/user/emails", {
+                    headers: { authorization: "Bearer " + accessToken, accept: "application/vnd.github+json", "user-agent": "Agency-Workforce-OS" }
+                });
+                const emails = await emailResponse.json();
+                email = normalizeEmail((Array.isArray(emails) ? emails.find((item) => item.primary && item.verified)?.email || emails.find((item) => item.verified)?.email : "") || "");
             }
+            const githubId = String(githubUser.id);
+            let user = state.users.find((item) => String(item.githubId || "") === githubId);
+            if (!user && email) user = state.users.find((item) => normalizeEmail(item.email) === email);
             if (!user) {
+                const baseUsername = normalizeUsername(githubUser.login);
+                let username = baseUsername;
+                let counter = 1;
+                while (state.users.some((item) => normalizeUsername(item.username) === username)) {
+                    counter += 1;
+                    username = baseUsername + "-" + counter;
+                }
                 user = {
                     id: id("usr"),
-                    name: String(body.name || email.split("@")[0] || "User"),
+                    username,
+                    name: String(githubUser.name || githubUser.login),
                     email,
+                    githubId,
                     role: "Owner",
                     status: "active",
                     createdAt: now()
@@ -1096,11 +1162,58 @@ async function handleAuthApi(req, res, pathname, state) {
                 state.users.push(user);
                 createUserWorkspace(state, user);
             }
-            if (!ownedProjects(state, user.id).length) {
-                createUserWorkspace(state, user);
+            user.githubId = githubId;
+            user.username = normalizeUsername(user.username || githubUser.login);
+            user.name = String(user.name || githubUser.name || githubUser.login);
+            if (email && !user.email) user.email = email;
+            updateUserLlmConfig(user, user.llmConfig || {});
+            ensureGovernanceState(state);
+            await saveState(state);
+            res.writeHead(302, { location: "/", "set-cookie": [sessionCookie(signSession(user.id), req), clearGithubCookie()], "cache-control": "no-store" });
+            res.end();
+            return true;
+        }
+        catch (error) {
+            sendJsonWithHeaders(res, 502, { error: error.message || "GitHub login failed." }, { "set-cookie": clearGithubCookie() });
+            return true;
+        }
+    }
+    if (req.method === "POST" && (pathname === "/api/auth/login" || pathname === "/api/auth/register")) {
+        const body = await readBody(req);
+        const username = normalizeUsername(body.username || body.email || "");
+        const password = String(body.password || "");
+        const isLegacyEmailLogin = pathname === "/api/auth/login" && username.includes("@") && normalizeEmail(username).includes("@");
+        if ((pathname === "/api/auth/register" && !usernameValid(username)) || (pathname === "/api/auth/login" && !usernameValid(username) && !isLegacyEmailLogin) || password.length < 8) {
+            sendJson(res, 400, { error: "Username must be 3-32 characters and use only letters, numbers, underscore, dash, or dot. Password must be at least 8 characters." });
+            return true;
+        }
+        try {
+            assertAuthRateLimit(req, username);
+        }
+        catch (error) {
+            sendJson(res, error.status || 429, { error: error.message || "Too many login attempts" });
+            return true;
+        }
+        let user = state.users.find((item) => normalizeUsername(item.username) === username);
+        if (!user && username.includes("@")) {
+            user = state.users.find((item) => normalizeEmail(item.email) === normalizeEmail(username));
+        }
+        if (pathname === "/api/auth/register") {
+            if (user) {
+                sendJson(res, 409, { error: "This username is already registered" });
+                return true;
             }
-            user.name = String(body.name || user.name || email.split("@")[0]);
-            user.email = email;
+            user = {
+                id: id("usr"),
+                username,
+                name: String(body.name || username || "User"),
+                email: "",
+                role: "Owner",
+                status: "active",
+                createdAt: now()
+            };
+            state.users.push(user);
+            createUserWorkspace(state, user);
             user.passwordHash = hashPassword(password);
             updateUserLlmConfig(user, user.llmConfig || {});
             ensureGovernanceState(state);
@@ -1109,7 +1222,7 @@ async function handleAuthApi(req, res, pathname, state) {
             return true;
         }
         if (!user?.passwordHash || !verifyPassword(password, user.passwordHash)) {
-            sendJson(res, 401, { error: "Invalid email or password" });
+            sendJson(res, 401, { error: "Invalid username or password" });
             return true;
         }
         sendJsonWithHeaders(res, 200, { user: publicUser(user) }, { "set-cookie": sessionCookie(signSession(user.id), req) });
