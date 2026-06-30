@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::{
     fs::{self, File},
     io::Write,
@@ -17,6 +19,13 @@ const PORT: &str = "4173";
 
 struct ServiceProcess(Mutex<Option<Child>>);
 
+fn hide_child_console(command: &mut Command) {
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+}
 fn repo_root_for_dev() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -165,7 +174,8 @@ fn start_local_service(app: &tauri::AppHandle) -> Result<(), String> {
     let secret = local_secret(&data_dir)?;
     let state_file = data_dir.join("state.local.json");
 
-    let child = Command::new("node")
+    let mut command = Command::new("node");
+    command
         .arg("dist/server.js")
         .current_dir(&root)
         .env("AGENCY_AUTH_SECRET", secret)
@@ -174,7 +184,10 @@ fn start_local_service(app: &tauri::AppHandle) -> Result<(), String> {
         .env("AGENCY_DESKTOP_MODE", "true")
         .env("AGENCY_STATE_FILE", &state_file)
         .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr))
+        .stderr(Stdio::from(stderr));
+    hide_child_console(&mut command);
+
+    let child = command
         .spawn()
         .map_err(|error| format!("Failed to start Node local service: {error}"))?;
 
