@@ -9,7 +9,8 @@ const state = {
   selectedWorkTaskId: null,
   selectedWorkEmployeeId: null,
   editingEmployeeId: null,
-  notificationTimer: null
+  notificationTimer: null,
+  apiHealth: { status: "unknown", message: "" }
 };
 
 function showAuthScreen(message = "") {
@@ -74,6 +75,30 @@ function notify(message, tone = "info") {
   state.notificationTimer = window.setTimeout(() => {
     toast.hidden = true;
   }, 5200);
+}
+
+function setApiHealth(status, message = "") {
+  state.apiHealth = { status, message };
+  renderApiConfigLabel();
+}
+
+function renderApiConfigLabel() {
+  const apiLabel = $("#api-config-label");
+  if (!apiLabel) return;
+  const config = state.data?.currentUser?.llmConfig || {};
+  const configured = Boolean(config.apiKeyConfigured);
+  let text = configured ? "API \u5df2\u4fdd\u5b58" : "API \u672a\u914d\u7f6e";
+  let statusClass = configured ? "saved" : "missing";
+  if (state.apiHealth?.status === "ok") {
+    text = "API \u6d4b\u8bd5\u901a\u8fc7";
+    statusClass = "ok";
+  } else if (state.apiHealth?.status === "error") {
+    text = "API \u5f02\u5e38";
+    statusClass = "error";
+  }
+  apiLabel.textContent = text;
+  apiLabel.className = "pill api-status " + statusClass;
+  apiLabel.title = state.apiHealth?.message || (configured ? "\u5df2\u4fdd\u5b58 My API\uff0c\u63d0\u4ea4\u4efb\u52a1\u524d\u4f1a\u81ea\u52a8\u6d4b\u8bd5\u3002" : "\u8bf7\u5148\u6253\u5f00 My API \u4fdd\u5b58\u53ef\u7528\u5bc6\u94a5\u3002");
 }
 
 function approvalNotice(result) {
@@ -372,10 +397,11 @@ async function submitQuickDemand(formElement) {
   status.textContent = "正在创建任务...";
   try {
     status.textContent = "正在测试 My API...";
-    await api("/api/me/llm-config/test", {
+    const testResult = await api("/api/me/llm-config/test", {
       method: "POST",
       body: JSON.stringify({})
     });
+    setApiHealth("ok", "My API \u53ef\u7528\uff1a" + (testResult.model || "\u6a21\u578b") + "\uff0c" + (testResult.latencyMs || 0) + "ms");
 
     status.textContent = "正在创建任务...";
     const task = await api("/api/tasks", {
@@ -417,6 +443,7 @@ async function submitQuickDemand(formElement) {
     }
   } catch (error) {
     status.textContent = error.message || "执行失败，请稍后重试。";
+    setApiHealth("error", error.message || "My API \u6216\u81ea\u52a8\u5de5\u4f5c\u6d41\u6267\u884c\u5931\u8d25");
   } finally {
     button.disabled = false;
   }
@@ -461,6 +488,9 @@ function taskActionButtons(task) {
   if (task.status === "todo") {
     actions.push(`<button class="secondary-button" type="button" data-automate-task="${task.id}">自动处理</button>`);
     actions.push(`<button class="secondary-button" type="button" data-run-task="${task.id}">开始任务</button>`);
+  }
+  if (task.status === "failed") {
+    actions.push(`<button class="secondary-button" type="button" data-automate-task="${task.id}">\u91cd\u65b0\u81ea\u52a8\u5904\u7406</button>`);
   }
   if (task.status === "implemented") {
     actions.push(`<button class="secondary-button" type="button" data-signoff-task="${task.id}" data-signoff-stage="qa">人工 QA 签名</button>`);
@@ -815,8 +845,7 @@ function renderChrome() {
   const currentUser = state.data.currentUser;
   const userLabel = $("#current-user-label");
   if (userLabel) userLabel.textContent = currentUser ? currentUser.email : "";
-  const apiLabel = $("#api-config-label");
-  if (apiLabel) apiLabel.textContent = currentUser?.llmConfig?.apiKeyConfigured ? "API set" : "API missing";
+  renderApiConfigLabel();
 
   $("#metric-active-tasks").textContent = state.data.dashboard.activeTasks;
   $("#metric-approvals").textContent = state.data.dashboard.pendingApprovals;
@@ -1013,7 +1042,8 @@ function renderWorkPanel() {
         </select>
       </label>
       <button class="primary-button" type="button" data-work-run="${task.id}" ${employee ? "" : "disabled"}>让该员工执行</button>
-      <button class="secondary-button danger-button" type="button" data-work-delete="${task.id}">删除任务</button>
+      ${task.status === "failed" || task.status === "todo" ? `<button class="secondary-button" type="button" data-automate-task="${task.id}">${task.status === "failed" ? "\u91cd\u65b0\u81ea\u52a8\u5904\u7406" : "\u603b\u7ba1\u81ea\u52a8\u5904\u7406"}</button>` : ""}
+      <button class="secondary-button danger-button" type="button" data-work-delete="${task.id}">\u5220\u9664\u4efb\u52a1</button>
       <button class="secondary-button" type="button" data-work-refresh>刷新</button>
     </div>
 
@@ -1328,20 +1358,26 @@ async function runAgentDiscussion(taskId) {
 
 
 async function automateTask(taskId) {
-  const result = await api(`/api/tasks/${taskId}/automate`, {
-    method: "POST",
-    body: JSON.stringify({})
-  });
-  state.currentView = "work";
-  state.selectedWorkTaskId = taskId;
-  await load();
-  renderWorkPanel();
-  const message = result.status === "waiting_approval"
-    ? "自动工作流已暂停：有审批单需要处理。"
-    : result.status === "partial"
-      ? "自动工作流已生成部分产物，请查看任务进行面板。"
-      : "总管 AI 已完成自动分工执行，并生成交付汇总。";
-  notify(message, result.status === "completed" ? "success" : "warning");
+  try {
+    const result = await api(`/api/tasks/${taskId}/automate`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    setApiHealth("ok", "My API \u53ef\u7528\uff0c\u81ea\u52a8\u5de5\u4f5c\u6d41\u5df2\u542f\u52a8\u3002");
+    state.currentView = "work";
+    state.selectedWorkTaskId = taskId;
+    await load();
+    renderWorkPanel();
+    const message = result.status === "waiting_approval"
+      ? "\u81ea\u52a8\u5de5\u4f5c\u6d41\u5df2\u6682\u505c\uff1a\u6709\u5ba1\u6279\u5355\u9700\u8981\u5904\u7406\u3002"
+      : result.status === "partial"
+        ? "\u81ea\u52a8\u5de5\u4f5c\u6d41\u5df2\u751f\u6210\u90e8\u5206\u4ea7\u7269\uff0c\u8bf7\u67e5\u770b\u4efb\u52a1\u8fdb\u884c\u9762\u677f\u3002"
+        : "\u603b\u7ba1 AI \u5df2\u5b8c\u6210\u81ea\u52a8\u5206\u5de5\u6267\u884c\uff0c\u5e76\u751f\u6210\u4ea4\u4ed8\u6c47\u603b\u3002";
+    notify(message, result.status === "completed" ? "success" : "warning");
+  } catch (error) {
+    setApiHealth("error", error.message || "My API \u4e0d\u53ef\u7528\uff0c\u81ea\u52a8\u5316\u672a\u542f\u52a8\u3002");
+    notify(error.message || "My API \u4e0d\u53ef\u7528\uff0c\u81ea\u52a8\u5316\u672a\u542f\u52a8\u3002", "warning");
+  }
 }
 
 async function runAgent(taskId, employeeId = "") {
@@ -1434,12 +1470,14 @@ function bindEvents() {
         method: "POST",
         body: JSON.stringify({})
       });
+      setApiHealth("ok", "My API \u53ef\u7528\uff1a" + (testResult.model || "\u6a21\u578b") + "\uff0c" + (testResult.latencyMs || 0) + "ms");
       const modal = document.getElementById("api-settings-modal");
       if (modal instanceof HTMLDialogElement) modal.close();
       await load();
       notify(`My API 测试通过：${testResult.model || "模型"}，${testResult.latencyMs || 0}ms`, "success");
     } catch (error) {
-      notify(error.message || "My API 测试失败，请检查 key、baseUrl、模型和额度。", "warning");
+      setApiHealth("error", error.message || "My API \u6d4b\u8bd5\u5931\u8d25");
+      notify(error.message || "My API \u6d4b\u8bd5\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5 key\u3001baseUrl\u3001\u6a21\u578b\u548c\u989d\u5ea6\u3002", "warning");
     }
   });
   $("#refresh-btn").addEventListener("click", load);

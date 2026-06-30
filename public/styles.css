@@ -476,6 +476,11 @@ textarea { resize: vertical; padding: 9px; font-size: 13px; }
 .pill.done,
 .pill.approved { color: #166534; border-color: #bbf7d0; background: #f0fdf4; }
 
+.api-status.ok { color: #166534; border-color: #bbf7d0; background: #f0fdf4; }
+.api-status.error { color: #991b1b; border-color: #fecaca; background: #fef2f2; }
+.api-status.missing { color: #92400e; border-color: #fed7aa; background: #fff7ed; }
+.api-status.saved { color: #374151; border-color: #d1d5db; background: #f9fafb; }
+
 .load-track {
   height: 6px;
   margin-top: 10px;
