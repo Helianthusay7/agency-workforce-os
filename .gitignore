@@ -7,3 +7,5 @@ dist/
 public/app.js
 data/state.local.json
 data/state.*.local.json
+data/auth.secret.local
+data/agency-workstation.pid
